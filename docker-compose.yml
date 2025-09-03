@@ -10,7 +10,34 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./dev/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research_user -d research_papers"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  phoenix:
+    build: ./research_phoenix
+    container_name: research_phoenix
+    environment:
+      DATABASE_USERNAME: research_user
+      DATABASE_PASSWORD: research_pass
+      DATABASE_HOSTNAME: postgres
+      DATABASE_NAME: research_papers
+      SECRET_KEY_BASE: "hoYuQfeEKxAIKyjx+4PBlZ+p9RRTgZNvsMcwkOOS7zKI5nZJT2g5xWZ6zeVOZULX"
+      PORT: "4000"
+      MIX_ENV: "dev"
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./research_phoenix:/app
+      - /app/deps
+      - /app/_build
+    working_dir: /app
     restart: unless-stopped
 
 volumes:

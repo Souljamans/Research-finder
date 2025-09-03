@@ -1,0 +1,43 @@
+# Dependencies
+/deps/
+/_build/
+
+# Generated files
+/priv/static/assets/
+/priv/static/cache_manifest.json
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+/tmp/
+*.tmp
+
+# Logs
+*.log
+
+# Node modules (if any)
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+/doc/
+
+# Test files
+/test/
