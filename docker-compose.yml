@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: research_db
+    environment:
+      POSTGRES_DB: research_papers
+      POSTGRES_USER: research_user
+      POSTGRES_PASSWORD: research_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./dev/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

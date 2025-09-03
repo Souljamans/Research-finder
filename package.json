@@ -1,0 +1,14 @@
+{
+  "name": "research-paper-platform",
+  "version": "1.0.0",
+  "description": "Research Paper Management Platform",
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:db": "dev/sh/runDB.sh",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && npm install",
+    "setup": "npm run install:frontend && npm run install:backend"
+  },
+  "workspaces": ["frontend", "backend"]
+}
