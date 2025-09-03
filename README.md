@@ -57,12 +57,20 @@ The database can be managed using the `dev/sh/runDB.sh` script:
 └── docker-compose.yml # Database container config
 ```
 
-## Phase 1 Complete ✅
+## Development Status
 
+### ✅ Phase 1: Project Setup & Infrastructure
 - [x] Project structure initialized
 - [x] Docker-based PostgreSQL database with runDB.sh script
 - [x] File storage system for PDFs
 - [x] Authentication system with JWT
 - [x] Development environment configured
 
-Ready for Phase 2: Core Data Models & API development.
+### ✅ Phase 2: Core Data Models & API  
+- [x] Database schema for papers, authors, notes, tags
+- [x] Paper and Notes models with full CRUD operations
+- [x] REST API endpoints with authentication
+- [x] File upload and management system
+- [x] Full-text search capabilities
+
+**Next**: Phase 3 - PDF Upload & Processing
