@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="ResearchPlatform" suffix=" · Phoenix Framework">
+    <.live_title default="Research Platform">
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
@@ -31,26 +31,30 @@
     </script>
   </head>
   <body>
-    <ul class="menu menu-horizontal w-full relative z-10 flex items-center gap-4 px-4 sm:px-6 lg:px-8 justify-end">
-      <%= if @current_scope do %>
-        <li>
-          {@current_scope.user.email}
-        </li>
-        <li>
-          <.link href={~p"/users/settings"}>Settings</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-out"} method="delete">Log out</.link>
-        </li>
-      <% else %>
-        <li>
-          <.link href={~p"/users/register"}>Register</.link>
-        </li>
-        <li>
-          <.link href={~p"/users/log-in"}>Log in</.link>
-        </li>
+    <div id="app-container" class="min-h-screen">
+      <%= if @current_scope && @conn.request_path != "/" do %>
+        <nav class="bg-base-100 border-b border-base-300">
+          <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+              <div class="flex items-center">
+                <.link href={~p"/"} class="text-xl font-semibold text-base-content">
+                  Research Platform
+                </.link>
+              </div>
+              <div class="flex items-center space-x-4">
+                <span class="text-sm text-base-content/70">{@current_scope.user.email}</span>
+                <.link href={~p"/users/settings"} class="btn btn-ghost btn-sm">
+                  Settings
+                </.link>
+                <.link href={~p"/users/log-out"} method="delete" class="btn btn-ghost btn-sm">
+                  Log out
+                </.link>
+              </div>
+            </div>
+          </div>
+        </nav>
       <% end %>
-    </ul>
-    {@inner_content}
+      {@inner_content}
+    </div>
   </body>
 </html>
