@@ -142,8 +142,53 @@ defmodule ResearchPlatform.Papers do
   def change_paper(%Scope{} = scope, %Paper{} = paper, attrs \\ %{}) do
     true = paper.user_id == scope.user.id
 
-    Paper.changeset(paper, attrs, scope)
+    # Convert arrays to strings for form display
+    form_attrs = 
+      attrs
+      |> convert_arrays_to_strings_for_form()
+    
+    # For initial form loading (no attrs), ensure the form shows string values
+    final_attrs = if Enum.empty?(attrs) do
+      %{
+        authors: convert_list_to_string(paper.authors, "\n"),
+        keywords: convert_list_to_string(paper.keywords, ", ")
+      }
+    else
+      form_attrs
+    end
+    
+    paper
+    |> prepare_paper_for_form()
+    |> Paper.form_changeset(final_attrs, scope)
   end
+
+  defp convert_arrays_to_strings_for_form(attrs) do
+    attrs
+    |> convert_array_field_to_string(:authors, "\n")
+    |> convert_array_field_to_string(:keywords, ", ")
+  end
+
+  defp convert_array_field_to_string(attrs, field, separator) do
+    case Map.get(attrs, field) do
+      list when is_list(list) -> Map.put(attrs, field, Enum.join(list, separator))
+      _ -> attrs
+    end
+  end
+
+  defp prepare_paper_for_form(paper) do
+    %{paper |
+      authors: convert_list_to_string(paper.authors, "\n"),
+      keywords: convert_list_to_string(paper.keywords, ", ")
+    }
+  end
+
+  defp convert_list_to_string(nil, _separator), do: ""
+  defp convert_list_to_string([], _separator), do: ""
+  defp convert_list_to_string(list, separator) when is_list(list) do
+    Enum.join(list, separator)
+  end
+  defp convert_list_to_string(value, _separator) when is_binary(value), do: value
+  defp convert_list_to_string(_value, _separator), do: ""
 
   alias ResearchPlatform.Papers.Note
   alias ResearchPlatform.Accounts.Scope
