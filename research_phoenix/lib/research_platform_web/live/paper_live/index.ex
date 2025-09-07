@@ -3,6 +3,8 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
 
   alias ResearchPlatform.Papers
 
+  on_mount {ResearchPlatformWeb.UserAuth, :default}
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -23,11 +25,10 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
       >
         <:col :let={{_id, paper}} label="Title">{paper.title}</:col>
         <:col :let={{_id, paper}} label="Authors">{paper.authors}</:col>
-        <:col :let={{_id, paper}} label="Abstract">{paper.abstract}</:col>
+        <:col :let={{_id, paper}} label="Abstract">{String.slice(paper.abstract || "", 0, 100) <> if String.length(paper.abstract || "") > 100, do: "...", else: ""}</:col>
         <:col :let={{_id, paper}} label="Keywords">{paper.keywords}</:col>
         <:col :let={{_id, paper}} label="File path">{paper.file_path}</:col>
         <:col :let={{_id, paper}} label="File size">{paper.file_size}</:col>
-        <:col :let={{_id, paper}} label="Metadata">{paper.metadata}</:col>
         <:action :let={{_id, paper}}>
           <div class="sr-only">
             <.link navigate={~p"/papers/#{paper}"}>Show</.link>

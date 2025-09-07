@@ -216,4 +216,50 @@ defmodule ResearchPlatformWeb.UserAuth do
   end
 
   defp maybe_store_return_to(conn), do: conn
+
+  @doc """
+  Used for routes that require authentication in LiveView.
+  """
+  def on_mount(:default, _params, session, socket) do
+    socket =
+      socket
+      |> Phoenix.Component.assign_new(:current_scope, fn ->
+        case session do
+          %{"user_token" => user_token} when is_binary(user_token) ->
+            case Accounts.get_user_by_session_token(user_token) do
+              {user, _token_inserted_at} -> Scope.for_user(user)
+              nil -> Scope.for_user(nil)
+            end
+          _ -> Scope.for_user(nil)
+        end
+      end)
+
+    {:cont, socket}
+  end
+
+  def on_mount(:require_authenticated_user, _params, session, socket) do
+    socket =
+      socket
+      |> Phoenix.Component.assign_new(:current_scope, fn ->
+        case session do
+          %{"user_token" => user_token} when is_binary(user_token) ->
+            case Accounts.get_user_by_session_token(user_token) do
+              {user, _token_inserted_at} -> Scope.for_user(user)
+              nil -> Scope.for_user(nil)
+            end
+          _ -> Scope.for_user(nil)
+        end
+      end)
+
+    if socket.assigns.current_scope && socket.assigns.current_scope.user do
+      {:cont, socket}
+    else
+      socket =
+        socket
+        |> Phoenix.LiveView.put_flash(:error, "You must log in to access this page.")
+        |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+
+      {:halt, socket}
+    end
+  end
 end

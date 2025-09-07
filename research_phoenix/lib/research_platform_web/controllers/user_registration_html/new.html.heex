@@ -15,12 +15,20 @@
 
     <.form :let={f} for={@changeset} action={~p"/users/register"}>
       <.input
-        field={f[:email]}
-        type="email"
-        label="Email"
+        field={f[:username]}
+        type="text"
+        label="Username"
         autocomplete="username"
         required
         phx-mounted={JS.focus()}
+      />
+      
+      <.input
+        field={f[:email]}
+        type="email"
+        label="Email"
+        autocomplete="email"
+        required
       />
 
       <.button phx-disable-with="Creating account..." class="btn btn-primary w-full">
