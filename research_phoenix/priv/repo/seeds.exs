@@ -22,24 +22,37 @@ test_password = "adminpassword123"
 # Check if user already exists
 case Accounts.get_user_by_email(test_email) do
   nil ->
-    # Create the user with email and username first
-    {:ok, user} = Accounts.register_user(%{email: test_email, username: test_username})
+    # Create user directly using proper changesets
+    user_attrs = %{
+      email: test_email,
+      username: test_username
+    }
     
-    # Add password to the user
-    {:ok, {user_with_password, _tokens}} = 
-      Accounts.update_user_password(user, %{password: test_password})
-    
-    # Confirm the user (skip email confirmation)
-    confirmed_user = 
-      user_with_password
-      |> User.confirm_changeset()
-      |> Repo.update!()
-    
-    IO.puts("✅ Created test admin user:")
-    IO.puts("   Username: #{test_username}")
-    IO.puts("   Email: #{test_email}")
-    IO.puts("   Password: #{test_password}")
-    IO.puts("   Status: Confirmed and ready to use")
+    # First create user with email/username
+    case Accounts.register_user(user_attrs) do
+      {:ok, user} ->
+        # Then set the password
+        case Accounts.update_user_password(user, %{password: test_password}) do
+          {:ok, {user_with_password, _tokens}} ->
+            # Confirm the user (skip email confirmation)
+            _confirmed_user = 
+              user_with_password
+              |> User.confirm_changeset()
+              |> Repo.update!()
+            
+            IO.puts("✅ Created test admin user:")
+            IO.puts("   Username: #{test_username}")
+            IO.puts("   Email: #{test_email}")
+            IO.puts("   Password: #{test_password}")
+            IO.puts("   Status: Confirmed and ready to use")
+            
+          {:error, password_changeset} ->
+            IO.puts("❌ Failed to set password: #{inspect(password_changeset.errors)}")
+        end
+        
+      {:error, changeset} ->
+        IO.puts("❌ Failed to create user: #{inspect(changeset.errors)}")
+    end
     
   %User{} ->
     IO.puts("ℹ️  Test admin user already exists:")

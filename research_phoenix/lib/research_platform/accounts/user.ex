@@ -7,7 +7,7 @@ defmodule ResearchPlatform.Accounts.User do
     field :email, :string
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
-    field :password_hash, :string, redact: true
+    field :password_hash, :string, redact: true  # Legacy field from Node.js app
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
 
@@ -97,12 +97,15 @@ defmodule ResearchPlatform.Accounts.User do
     password = get_change(changeset, :password)
 
     if hash_password? && password && changeset.valid? do
+      hashed_password = Bcrypt.hash_pwd_salt(password)
+      
       changeset
       # If using Bcrypt, then further validate it is at most 72 bytes long
       |> validate_length(:password, max: 72, count: :bytes)
       # Hashing could be done with `Ecto.Changeset.prepare_changes/2`, but that
       # would keep the database transaction open longer and hurt performance.
-      |> put_change(:hashed_password, Bcrypt.hash_pwd_salt(password))
+      |> put_change(:hashed_password, hashed_password)
+      |> put_change(:password_hash, hashed_password)  # Set both for compatibility
       |> delete_change(:password)
     else
       changeset

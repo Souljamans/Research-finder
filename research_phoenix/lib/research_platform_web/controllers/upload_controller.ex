@@ -5,13 +5,12 @@ defmodule ResearchPlatformWeb.UploadController do
   alias ResearchPlatform.Services.PdfService
   
   def upload_pdf(conn, %{"upload" => upload_params}) do
-    current_user = conn.assigns.current_user
-    scope = %ResearchPlatform.Accounts.Scope{user: current_user}
+    scope = conn.assigns.current_scope
     
     case upload_params do
       %Plug.Upload{filename: filename, path: temp_path, content_type: "application/pdf"} ->
         # Generate unique filename
-        new_filename = PdfService.generate_filename(filename, current_user.id)
+        new_filename = PdfService.generate_filename(filename, scope.user.id)
         final_path = PdfService.get_upload_path(new_filename)
         
         # Ensure upload directory exists
@@ -109,8 +108,7 @@ defmodule ResearchPlatformWeb.UploadController do
   end
   
   def download_pdf(conn, %{"id" => id}) do
-    current_user = conn.assigns.current_user
-    scope = %ResearchPlatform.Accounts.Scope{user: current_user}
+    scope = conn.assigns.current_scope
     
     try do
       paper = Papers.get_paper!(scope, id)
@@ -143,6 +141,40 @@ defmodule ResearchPlatformWeb.UploadController do
           success: false,
           error: "Paper not found"
         })
+    end
+  end
+
+  def view_pdf(conn, %{"id" => id}) do
+    scope = conn.assigns.current_scope
+    
+    try do
+      paper = Papers.get_paper!(scope, id)
+      
+      if paper.file_path do
+        file_path = PdfService.get_upload_path(paper.file_path)
+        
+        if File.exists?(file_path) do
+          filename = "#{paper.title |> String.replace(~r/[^a-zA-Z0-9]/, "_")}.pdf"
+          
+          conn
+          |> put_resp_content_type("application/pdf")
+          |> put_resp_header("content-disposition", "inline; filename=\"#{filename}\"")
+          |> send_file(200, file_path)
+        else
+          conn
+          |> put_resp_content_type("text/html")
+          |> send_resp(404, "<h1>PDF Not Found</h1><p>The PDF file could not be found on the server.</p>")
+        end
+      else
+        conn
+        |> put_resp_content_type("text/html")
+        |> send_resp(404, "<h1>No PDF Available</h1><p>This paper does not have an associated PDF file.</p>")
+      end
+    rescue
+      Ecto.NoResultsError ->
+        conn
+        |> put_resp_content_type("text/html")  
+        |> send_resp(404, "<h1>Paper Not Found</h1><p>The requested paper could not be found.</p>")
     end
   end
 end

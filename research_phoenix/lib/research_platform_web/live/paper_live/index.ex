@@ -33,6 +33,13 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
           <div class="sr-only">
             <.link navigate={~p"/papers/#{paper}"}>Show</.link>
           </div>
+          <%= if paper.file_path do %>
+            <.link href={"/api/papers/#{paper.id}/view"} target="_blank" class="text-blue-600 hover:text-blue-800">
+              View PDF
+            </.link>
+          <% end %>
+        </:action>
+        <:action :let={{_id, paper}}>
           <.link navigate={~p"/papers/#{paper}/edit"}>Edit</.link>
         </:action>
         <:action :let={{id, paper}}>
