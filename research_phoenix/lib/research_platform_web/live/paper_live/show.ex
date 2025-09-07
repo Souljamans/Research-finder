@@ -3,6 +3,8 @@ defmodule ResearchPlatformWeb.PaperLive.Show do
 
   alias ResearchPlatform.Papers
 
+  on_mount {ResearchPlatformWeb.UserAuth, :default}
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -27,7 +29,7 @@ defmodule ResearchPlatformWeb.PaperLive.Show do
         <:item title="Keywords">{@paper.keywords}</:item>
         <:item title="File path">{@paper.file_path}</:item>
         <:item title="File size">{@paper.file_size}</:item>
-        <:item title="Metadata">{@paper.metadata}</:item>
+        <:item title="Metadata">{inspect(@paper.metadata)}</:item>
       </.list>
     </Layouts.app>
     """

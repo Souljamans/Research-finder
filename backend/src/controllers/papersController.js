@@ -3,23 +3,73 @@ import { Note } from '../models/Note.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { getFilePath } from '../config/storage.js';
+import { PDFService } from '../services/pdfService.js';
 
 export async function createPaper(req, res) {
   try {
     const { title, authors, abstract, keywords, metadata } = req.body;
     const userId = req.user.id;
 
-    if (!title) {
+    let paperTitle = title;
+    let paperAuthors = Array.isArray(authors) ? authors : (authors ? [authors] : []);
+    let paperAbstract = abstract || '';
+    let extractedText = null;
+    let pdfMetadata = null;
+    let processingStatus = { status: 'none' };
+
+    if (req.file) {
+      try {
+        processingStatus.status = 'processing';
+        processingStatus.steps = ['Extracting text...', 'Extracting metadata...', 'Processing complete'];
+        
+        const processedData = await PDFService.processUploadedPDF(req.file.filename);
+        extractedText = processedData.extractedText;
+        pdfMetadata = processedData.metadata;
+
+        if (!paperTitle && pdfMetadata.extractedTitle) {
+          paperTitle = pdfMetadata.extractedTitle;
+        }
+        if (!paperTitle && pdfMetadata.title) {
+          paperTitle = pdfMetadata.title;
+        }
+        
+        if (paperAuthors.length === 0 && pdfMetadata.extractedAuthors?.length > 0) {
+          paperAuthors = pdfMetadata.extractedAuthors;
+        }
+        if (paperAuthors.length === 0 && pdfMetadata.author) {
+          paperAuthors = [pdfMetadata.author];
+        }
+
+        processingStatus.status = 'completed';
+        
+      } catch (pdfError) {
+        console.warn('PDF processing failed:', pdfError.message);
+        processingStatus.status = 'failed';
+        processingStatus.error = pdfError.message;
+      }
+    }
+
+    if (!paperTitle) {
       return res.status(400).json({ error: 'Title is required' });
     }
 
     const paperData = {
-      title,
-      authors: Array.isArray(authors) ? authors : (authors ? [authors] : []),
-      abstract: abstract || '',
+      title: paperTitle,
+      authors: paperAuthors,
+      abstract: paperAbstract,
       keywords: Array.isArray(keywords) ? keywords : (keywords ? [keywords] : []),
       user_id: userId,
-      metadata: metadata || {}
+      metadata: {
+        ...metadata,
+        ...pdfMetadata,
+        extractedText,
+        processingInfo: {
+          processedAt: new Date().toISOString(),
+          textExtracted: !!extractedText,
+          metadataExtracted: !!pdfMetadata,
+          wordCount: pdfMetadata?.wordCount || 0
+        }
+      }
     };
 
     if (req.file) {
@@ -31,8 +81,10 @@ export async function createPaper(req, res) {
 
     res.status(201).json({
       message: 'Paper created successfully',
-      paper: paper.toJSON()
+      paper: paper.toJSON(),
+      processing: processingStatus
     });
+    
   } catch (error) {
     console.error('Create paper error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -193,6 +245,74 @@ export async function downloadPaper(req, res) {
     res.sendFile(path.resolve(filePath));
   } catch (error) {
     console.error('Download paper error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+export async function reprocessPaper(req, res) {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    const paper = await Paper.findById(id, userId);
+    
+    if (!paper) {
+      return res.status(404).json({ error: 'Paper not found' });
+    }
+
+    if (!paper.file_path) {
+      return res.status(400).json({ error: 'No PDF file associated with this paper' });
+    }
+
+    let processingStatus = { status: 'processing', steps: ['Re-extracting text...', 'Re-extracting metadata...', 'Updating paper...'] };
+    
+    try {
+      const processedData = await PDFService.processUploadedPDF(paper.file_path);
+      
+      const updateData = {
+        metadata: {
+          ...paper.metadata,
+          ...processedData.metadata,
+          extractedText: processedData.extractedText,
+          processingInfo: {
+            processedAt: new Date().toISOString(),
+            textExtracted: !!processedData.extractedText,
+            metadataExtracted: !!processedData.metadata,
+            wordCount: processedData.metadata?.wordCount || 0,
+            reprocessed: true
+          }
+        }
+      };
+
+      if (processedData.metadata.extractedTitle && !req.body.keepTitle) {
+        updateData.title = processedData.metadata.extractedTitle;
+      }
+
+      if (processedData.metadata.extractedAuthors?.length > 0 && !req.body.keepAuthors) {
+        updateData.authors = processedData.metadata.extractedAuthors;
+      }
+
+      const updatedPaper = await Paper.update(id, userId, updateData);
+      
+      processingStatus.status = 'completed';
+
+      res.json({
+        message: 'Paper reprocessed successfully',
+        paper: updatedPaper.toJSON(),
+        processing: processingStatus
+      });
+
+    } catch (pdfError) {
+      console.error('PDF reprocessing failed:', pdfError.message);
+      res.status(500).json({ 
+        error: 'Failed to reprocess PDF',
+        details: pdfError.message,
+        processing: { status: 'failed', error: pdfError.message }
+      });
+    }
+
+  } catch (error) {
+    console.error('Reprocess paper error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
