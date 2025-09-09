@@ -85,7 +85,8 @@ defmodule ResearchPlatform.Papers.Paper do
   defp normalize_authors(changeset) do
     case get_change(changeset, :authors) do
       nil -> 
-        put_change(changeset, :authors, [])
+        # Don't change the field if there's no change
+        changeset
       authors when is_binary(authors) ->
         # Convert string to array, splitting by newlines and filtering empty lines
         author_list = 
@@ -96,6 +97,7 @@ defmodule ResearchPlatform.Papers.Paper do
         
         put_change(changeset, :authors, author_list)
       authors when is_list(authors) -> 
+        # Already an array, keep as-is
         changeset
     end
   end
@@ -103,7 +105,8 @@ defmodule ResearchPlatform.Papers.Paper do
   defp normalize_keywords(changeset) do
     case get_change(changeset, :keywords) do
       nil -> 
-        put_change(changeset, :keywords, [])
+        # Don't change the field if there's no change
+        changeset
       keywords when is_binary(keywords) ->
         # Convert string to array, splitting by commas and filtering empty entries
         keyword_list = 
@@ -114,6 +117,7 @@ defmodule ResearchPlatform.Papers.Paper do
         
         put_change(changeset, :keywords, keyword_list)
       keywords when is_list(keywords) -> 
+        # Already an array, keep as-is
         changeset
     end
   end

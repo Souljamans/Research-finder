@@ -127,42 +127,28 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   def handle_event("upload_pdf", _params, socket) do
-    IO.puts("=== PDF UPLOAD HANDLER STARTED ===")
-    
     uploaded_files =
       consume_uploaded_entries(socket, :pdf_file, fn %{path: path}, entry ->
         dest = Path.join("priv/static/uploads/pdfs", "#{entry.client_name}")
-        IO.puts("Copying #{path} -> #{dest}")
         File.cp!(path, dest)
         {:ok, dest}
       end)
 
-    IO.puts("Uploaded files: #{inspect(uploaded_files)}")
-
     case uploaded_files do
       [file_path] ->
-        IO.puts("Processing file: #{file_path}")
-        
         # Convert relative path to absolute path for PDF extraction
         absolute_file_path = Path.expand(file_path)
-        IO.puts("Absolute path: #{absolute_file_path}")
-        IO.puts("File exists at absolute path: #{File.exists?(absolute_file_path)}")
         
         # Try to extract content from PDF, fallback to filename parsing if that fails
-        IO.puts("About to call extract_pdf_content...")
         
         paper_attrs = try do
           case extract_pdf_content(absolute_file_path) do
             {:ok, extracted_content} ->
-              IO.puts("PDF extraction successful!")
-              IO.puts("Extracted title: #{extracted_content.title}")
-              IO.puts("Extracted authors: #{inspect(extracted_content.authors)}")
-              IO.puts("Extracted keywords: #{inspect(extracted_content.keywords)}")
               %{
               title: extracted_content.title || extract_title_from_filename(Path.basename(file_path)) || "Uploaded PDF",
-              authors: extracted_content.authors || [],
+              authors: convert_list_to_array(extracted_content.authors || []),
               abstract: extracted_content.abstract || "PDF uploaded - please edit to add details",
-              keywords: extracted_content.keywords || [],
+              keywords: convert_list_to_array(extracted_content.keywords || []),
               file_path: Path.basename(file_path),
               file_size: File.stat!(file_path).size,
               metadata: %{
@@ -189,9 +175,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
             }
           end
         rescue
-          error ->
-            IO.puts("Exception during PDF extraction: #{inspect(error)}")
-            IO.puts("Stack trace: #{Exception.format_stacktrace(__STACKTRACE__)}")
+          _error ->
             # Fallback to filename parsing on exception
             %{
               title: extract_title_from_filename(Path.basename(file_path)) || "Uploaded PDF",
@@ -228,17 +212,11 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp save_paper(socket, :edit, paper_params) do
-    IO.puts("=== SAVE PAPER :edit ===")
-    IO.puts("Original paper_params: #{inspect(paper_params)}")
-    
     # Convert form parameters to Paper schema format
     converted_params = convert_form_to_paper_params(paper_params)
     
-    IO.puts("About to call Papers.update_paper...")
     case Papers.update_paper(socket.assigns.current_scope, socket.assigns.paper, converted_params) do
       {:ok, paper} ->
-        IO.puts("SUCCESS: Paper updated successfully!")
-        IO.puts("Updated paper: #{inspect(paper)}")
         {:noreply,
          socket
          |> put_flash(:info, "Paper updated successfully")
@@ -247,8 +225,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
          )}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        IO.puts("ERROR: Paper update failed!")
-        IO.puts("Changeset errors: #{inspect(changeset.errors)}")
         # Convert changeset back to form format for display
         form_changeset = convert_paper_changeset_to_form(changeset, socket.assigns.paper)
         {:noreply, assign(socket, form: to_form(form_changeset))}
@@ -280,30 +256,31 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
 
   # Convert form parameters (strings) to Paper schema parameters (arrays)
   defp convert_form_to_paper_params(form_params) do
-    IO.puts("=== Converting form params to paper params ===")
-    IO.puts("Original form_params: #{inspect(form_params)}")
+    # Convert authors string to array
+    authors = case Map.get(form_params, "authors") do
+      value when is_binary(value) ->
+        value
+        |> String.split("\n")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+      _ -> []
+    end
     
-    result = form_params
-    |> convert_string_to_array("authors", "\n")
-    |> convert_string_to_array("keywords", ",")
+    # Convert keywords string to array
+    keywords = case Map.get(form_params, "keywords") do
+      value when is_binary(value) ->
+        value
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+      _ -> []
+    end
     
-    IO.puts("Converted paper_params: #{inspect(result)}")
-    IO.puts("=== End conversion ===")
-    result
+    form_params
+    |> Map.put("authors", authors)
+    |> Map.put("keywords", keywords)
   end
 
-  defp convert_string_to_array(params, field, separator) do
-    case Map.get(params, field) do
-      value when is_binary(value) ->
-        array_value = 
-          value
-          |> String.split(separator)
-          |> Enum.map(&String.trim/1)
-          |> Enum.reject(&(&1 == ""))
-        Map.put(params, field, array_value)
-      _ -> params
-    end
-  end
 
   # Convert Paper changeset errors back to Form format for display
   defp convert_paper_changeset_to_form(changeset, paper) do
@@ -379,18 +356,11 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp extract_pdf_content(file_path) do
-    # Add debugging
-    IO.puts("Attempting PDF extraction for: #{file_path}")
-    IO.puts("File exists: #{File.exists?(file_path)}")
     
     # Try different PDF extraction methods
-    with {:error, reason1} <- extract_with_pdftotext(file_path),
-         {:error, reason2} <- extract_with_python_pdfplumber(file_path),
-         {:error, reason3} <- extract_with_nodejs(file_path) do
-      IO.puts("All extraction methods failed:")
-      IO.puts("  pdftotext: #{reason1}")
-      IO.puts("  python: #{reason2}")
-      IO.puts("  nodejs: #{reason3}")
+    with {:error, _reason1} <- extract_with_pdftotext(file_path),
+         {:error, _reason2} <- extract_with_python_pdfplumber(file_path),
+         {:error, _reason3} <- extract_with_nodejs(file_path) do
       {:error, "No PDF extraction tools available"}
     end
   end
@@ -434,7 +404,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp extract_with_nodejs(file_path) do
-    IO.puts("Trying nodejs extraction with file: #{file_path}")
     
     # Create a clean script that only outputs JSON to stdout
     script_content = """
@@ -466,11 +435,8 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
     }
     """
     
-    IO.puts("Running Node.js command with inline script")
     case System.cmd("node", ["-e", script_content]) do
       {output, 0} when output != "" ->
-        IO.puts("Node.js command succeeded, output length: #{String.length(output)}")
-        IO.puts("First 500 chars of output: #{String.slice(output, 0, 500)}")
         try do
           case Jason.decode(output) do
             {:ok, %{"text" => text, "metadata" => pdf_metadata}} ->
@@ -488,11 +454,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
                 pdf_metadata: pdf_metadata
               }
               
-              IO.puts("Final extracted data:")
-              IO.puts("Title: #{title}")
-              IO.puts("Authors: #{inspect(enhanced_parsed.authors)}")
-              IO.puts("Keywords: #{inspect(enhanced_parsed.keywords)}")
-              
               {:ok, enhanced_parsed}
             {:error, _} ->
               # Fallback to treating as plain text
@@ -505,9 +466,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
             parsed = parse_pdf_text(output)
             {:ok, parsed}
         end
-      {output, exit_code} ->
-        IO.puts("Node.js command failed with exit code: #{exit_code}")
-        IO.puts("Error output: #{output}")
+      {_output, _exit_code} ->
         {:error, "nodejs pdf-parse failed"}
     end
   rescue
@@ -576,8 +535,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
       String.contains?(line, ["Jan Riordan", "Diane Bibb", "Marsha Miller", "Tim Rawlins"]) or
       Regex.match?(~r/[A-Z][a-z]+\s+[A-Z][a-z]+.*(?:EdD|RN|IBCLC|BSN|BA|MA)/i, line)
     end)
-    
-    IO.puts("Found potential author lines: #{inspect(author_lines)}")
 
     case author_lines do
       [] ->
@@ -605,15 +562,12 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp parse_author_string(author_string) do
-    IO.puts("Parsing author string: #{author_string}")
     
     # Parse author string by looking for name patterns
     cleaned = author_string
     |> String.replace(~r/\s*(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)\s*/i, " ") # Remove credentials
     |> String.replace(~r/,\s*,/, ",") # Clean up double commas
     |> String.replace(~r/\s+/, " ") # Normalize spaces
-    
-    IO.puts("Cleaned author string: #{cleaned}")
     
     # Find all name patterns in the cleaned string
     names = Regex.scan(~r/([A-Z][a-z]+)\s+([A-Z][a-z]+)/, cleaned)
@@ -632,9 +586,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
       |> Enum.map(fn name ->
         case Regex.run(~r/([A-Z][a-z]+)\s+([A-Z][a-z]+)/, name) do
           [_full, first, last] -> "#{first} #{last}"
-          _ -> 
-            IO.puts("Could not extract name from: #{name}")
-            nil
+          _ -> nil
         end
       end)
       |> Enum.reject(&is_nil/1)
@@ -642,7 +594,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
       |> Enum.take(10)
     end
     
-    IO.puts("Parsed authors: #{inspect(result)}")
     result
   end
 
@@ -669,7 +620,6 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp extract_keywords_from_pdf_text(lines) do
-    IO.puts("Looking for keywords in lines...")
     
     # Find keywords section - look in more places
     keyword_line = 
@@ -678,8 +628,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
       |> Enum.find(&Regex.match?(~r/(keywords?|key\s+words?):?\s*/i, &1))
 
     case keyword_line do
-      nil -> 
-        IO.puts("No explicit keyword line found, trying to extract from subject/topics")
+      nil ->
         # Try to extract from subject-like terms or common academic keywords
         potential_keywords = lines
         |> Enum.take(20)
@@ -693,20 +642,15 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
         |> Enum.uniq()
         |> Enum.take(5)
         
-        IO.puts("Extracted potential keywords: #{inspect(potential_keywords)}")
         potential_keywords
         
       line ->
-        IO.puts("Found keyword line: #{line}")
-        result = line
+        line
         |> String.replace(~r/^.*?(keywords?|key\s+words?):?\s*/i, "")
         |> String.split([",", ";", ".", "\n"])
         |> Enum.map(&String.trim/1)
         |> Enum.reject(&(&1 == ""))
         |> Enum.take(10)
-        
-        IO.puts("Extracted keywords from line: #{inspect(result)}")
-        result
     end
   end
 
@@ -715,4 +659,11 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   defp error_to_string(:not_accepted), do: "Only PDF files are allowed"
   defp error_to_string(:too_many_files), do: "Only one file allowed"
   defp error_to_string(error), do: "Upload error: #{inspect(error)}"
+
+  # Helper function to ensure arrays are properly formatted
+  defp convert_list_to_array(nil), do: []
+  defp convert_list_to_array([]), do: []
+  defp convert_list_to_array(list) when is_list(list), do: list
+  defp convert_list_to_array(value) when is_binary(value), do: [value]
+  defp convert_list_to_array(_), do: []
 end
