@@ -48,36 +48,14 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
         </div>
       <% end %>
 
-      <.form for={@form} id="paper-form" phx-change="validate" phx-submit="save">
+      <.form for={@form} id="paper-form" phx-change="validate" phx-submit="save" as={:paper}>
         <.input field={@form[:title]} type="text" label="Title" />
         
-        <div>
-          <label for="paper_authors" class="block text-sm font-medium leading-6 text-zinc-800">Authors (one per line)</label>
-          <div class="mt-2">
-            <textarea 
-              name="paper[authors]" 
-              id="paper_authors"
-              class="block w-full rounded-md border-0 py-1.5 text-white shadow-sm ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-inset focus:ring-zinc-900 sm:text-sm sm:leading-6 min-h-[6rem] phx-no-feedback"
-              rows="3"
-              phx-debounce="200"
-            >{@form[:authors].value || ""}</textarea>
-          </div>
-        </div>
+        <.input field={@form[:authors]} type="textarea" label="Authors (one per line)" rows="3" />
         
         <.input field={@form[:abstract]} type="textarea" label="Abstract" />
         
-        <div>
-          <label for="paper_keywords" class="block text-sm font-medium leading-6 text-zinc-800">Keywords (comma-separated)</label>
-          <div class="mt-2">
-            <textarea 
-              name="paper[keywords]" 
-              id="paper_keywords"
-              class="block w-full rounded-md border-0 py-1.5 text-white shadow-sm ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-inset focus:ring-zinc-900 sm:text-sm sm:leading-6 min-h-[4rem] phx-no-feedback"
-              rows="2"
-              phx-debounce="200"
-            >{@form[:keywords].value || ""}</textarea>
-          </div>
-        </div>
+        <.input field={@form[:keywords]} type="textarea" label="Keywords (comma-separated)" rows="2" />
         <footer>
           <.button phx-disable-with="Saving..." variant="primary">Save Paper</.button>
           <.button navigate={return_path(@current_scope, @return_to, @paper)}>Cancel</.button>
@@ -127,8 +105,17 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
     {:noreply, assign(socket, form: to_form(changeset, action: :validate))}
   end
 
+  def handle_event("validate", %{"form" => form_params}, socket) do
+    changeset = Papers.change_paper(socket.assigns.current_scope, socket.assigns.paper, form_params)
+    {:noreply, assign(socket, form: to_form(changeset, action: :validate))}
+  end
+
   def handle_event("save", %{"paper" => paper_params}, socket) do
     save_paper(socket, socket.assigns.live_action, paper_params)
+  end
+
+  def handle_event("save", %{"form" => form_params}, socket) do
+    save_paper(socket, socket.assigns.live_action, form_params)
   end
 
   def handle_event("validate_upload", _params, socket) do
@@ -241,8 +228,17 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   end
 
   defp save_paper(socket, :edit, paper_params) do
-    case Papers.update_paper(socket.assigns.current_scope, socket.assigns.paper, paper_params) do
+    IO.puts("=== SAVE PAPER :edit ===")
+    IO.puts("Original paper_params: #{inspect(paper_params)}")
+    
+    # Convert form parameters to Paper schema format
+    converted_params = convert_form_to_paper_params(paper_params)
+    
+    IO.puts("About to call Papers.update_paper...")
+    case Papers.update_paper(socket.assigns.current_scope, socket.assigns.paper, converted_params) do
       {:ok, paper} ->
+        IO.puts("SUCCESS: Paper updated successfully!")
+        IO.puts("Updated paper: #{inspect(paper)}")
         {:noreply,
          socket
          |> put_flash(:info, "Paper updated successfully")
@@ -251,12 +247,19 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
          )}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
+        IO.puts("ERROR: Paper update failed!")
+        IO.puts("Changeset errors: #{inspect(changeset.errors)}")
+        # Convert changeset back to form format for display
+        form_changeset = convert_paper_changeset_to_form(changeset, socket.assigns.paper)
+        {:noreply, assign(socket, form: to_form(form_changeset))}
     end
   end
 
   defp save_paper(socket, :new, paper_params) do
-    case Papers.create_paper(socket.assigns.current_scope, paper_params) do
+    # Convert form parameters to Paper schema format
+    converted_params = convert_form_to_paper_params(paper_params)
+    
+    case Papers.create_paper(socket.assigns.current_scope, converted_params) do
       {:ok, paper} ->
         {:noreply,
          socket
@@ -266,12 +269,90 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
          )}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
+        # Convert changeset back to form format for display
+        form_changeset = convert_paper_changeset_to_form(changeset, %Paper{})
+        {:noreply, assign(socket, form: to_form(form_changeset))}
     end
   end
 
   defp return_path(_scope, "index", _paper), do: ~p"/papers"
   defp return_path(_scope, "show", paper), do: ~p"/papers/#{paper}"
+
+  # Convert form parameters (strings) to Paper schema parameters (arrays)
+  defp convert_form_to_paper_params(form_params) do
+    IO.puts("=== Converting form params to paper params ===")
+    IO.puts("Original form_params: #{inspect(form_params)}")
+    
+    result = form_params
+    |> convert_string_to_array("authors", "\n")
+    |> convert_string_to_array("keywords", ",")
+    
+    IO.puts("Converted paper_params: #{inspect(result)}")
+    IO.puts("=== End conversion ===")
+    result
+  end
+
+  defp convert_string_to_array(params, field, separator) do
+    case Map.get(params, field) do
+      value when is_binary(value) ->
+        array_value = 
+          value
+          |> String.split(separator)
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+        Map.put(params, field, array_value)
+      _ -> params
+    end
+  end
+
+  # Convert Paper changeset errors back to Form format for display
+  defp convert_paper_changeset_to_form(changeset, paper) do
+    # Create a form representation of the paper with current form data
+    form_paper = %Paper.Form{
+      id: paper.id,
+      title: get_field_or_change(changeset, :title) || paper.title || "",
+      authors: convert_array_to_string(get_field_or_change(changeset, :authors) || paper.authors || [], "\n"),
+      abstract: get_field_or_change(changeset, :abstract) || paper.abstract || "",
+      keywords: convert_array_to_string(get_field_or_change(changeset, :keywords) || paper.keywords || [], ", "),
+      file_path: get_field_or_change(changeset, :file_path) || paper.file_path,
+      file_size: get_field_or_change(changeset, :file_size) || paper.file_size,
+      metadata: get_field_or_change(changeset, :metadata) || paper.metadata,
+      upload_date: get_field_or_change(changeset, :upload_date) || paper.upload_date,
+      created_at: get_field_or_change(changeset, :created_at) || paper.created_at,
+      updated_at: get_field_or_change(changeset, :updated_at) || paper.updated_at,
+      inserted_at: get_field_or_change(changeset, :inserted_at) || paper.inserted_at,
+      user_id: get_field_or_change(changeset, :user_id) || paper.user_id
+    }
+
+    # Create a form changeset with the original errors translated to form field names
+    %Ecto.Changeset{
+      action: changeset.action,
+      changes: %{},
+      errors: convert_paper_errors_to_form_errors(changeset.errors),
+      data: form_paper,
+      valid?: false
+    }
+  end
+
+  defp get_field_or_change(changeset, field) do
+    case Ecto.Changeset.get_change(changeset, field) do
+      nil -> Ecto.Changeset.get_field(changeset, field)
+      value -> value
+    end
+  end
+
+  defp convert_array_to_string(nil, _separator), do: ""
+  defp convert_array_to_string([], _separator), do: ""
+  defp convert_array_to_string(list, separator) when is_list(list) do
+    Enum.join(list, separator)
+  end
+  defp convert_array_to_string(value, _separator) when is_binary(value), do: value
+  defp convert_array_to_string(_value, _separator), do: ""
+
+  defp convert_paper_errors_to_form_errors(errors) do
+    # The errors should already map correctly since form and paper use same field names
+    errors
+  end
 
   defp extract_title_from_filename(filename) do
     filename
@@ -628,6 +709,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
         result
     end
   end
+
 
   defp error_to_string(:too_large), do: "File too large (max 50MB)"
   defp error_to_string(:not_accepted), do: "Only PDF files are allowed"

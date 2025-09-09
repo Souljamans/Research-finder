@@ -73,6 +73,25 @@ defmodule ResearchPlatformWeb.Layouts do
   end
 
   @doc """
+  Minimal app layout without header for specific pages like papers list.
+  """
+  attr :flash, :map, required: true, doc: "the map of flash messages"
+  attr :current_scope, :map, default: nil
+  slot :inner_block, required: true
+
+  def minimal(assigns) do
+    ~H"""
+    <main class="px-2 py-4 sm:px-4 lg:px-6 min-h-screen w-full">
+      <div class="w-full max-w-none">
+        {render_slot(@inner_block)}
+      </div>
+    </main>
+
+    <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc """
   Shows the flash group with standard titles and content.
 
   ## Examples

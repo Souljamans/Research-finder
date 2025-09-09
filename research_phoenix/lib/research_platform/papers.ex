@@ -142,24 +142,10 @@ defmodule ResearchPlatform.Papers do
   def change_paper(%Scope{} = scope, %Paper{} = paper, attrs \\ %{}) do
     true = paper.user_id == scope.user.id
 
-    # Convert arrays to strings for form display
-    form_attrs = 
-      attrs
-      |> convert_arrays_to_strings_for_form()
+    # Convert paper to form representation
+    form_paper = paper_to_form(paper)
     
-    # For initial form loading (no attrs), ensure the form shows string values
-    final_attrs = if Enum.empty?(attrs) do
-      %{
-        authors: convert_list_to_string(paper.authors, "\n"),
-        keywords: convert_list_to_string(paper.keywords, ", ")
-      }
-    else
-      form_attrs
-    end
-    
-    paper
-    |> prepare_paper_for_form()
-    |> Paper.form_changeset(final_attrs, scope)
+    Paper.Form.changeset(form_paper, attrs, scope)
   end
 
   defp convert_arrays_to_strings_for_form(attrs) do
@@ -189,6 +175,24 @@ defmodule ResearchPlatform.Papers do
   end
   defp convert_list_to_string(value, _separator) when is_binary(value), do: value
   defp convert_list_to_string(_value, _separator), do: ""
+
+  defp paper_to_form(%Paper{} = paper) do
+    %Paper.Form{
+      id: paper.id,
+      title: paper.title || "",
+      authors: convert_list_to_string(paper.authors, "\n"),
+      abstract: paper.abstract || "",
+      keywords: convert_list_to_string(paper.keywords, ", "),
+      file_path: paper.file_path,
+      file_size: paper.file_size,
+      metadata: paper.metadata,
+      upload_date: paper.upload_date,
+      created_at: paper.created_at,
+      updated_at: paper.updated_at,
+      inserted_at: paper.inserted_at,
+      user_id: paper.user_id
+    }
+  end
 
   alias ResearchPlatform.Papers.Note
   alias ResearchPlatform.Accounts.Scope
