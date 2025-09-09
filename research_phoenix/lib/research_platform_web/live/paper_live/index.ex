@@ -79,22 +79,23 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
                     </div>
                   </td>
                   <td class="px-6 py-4">
-                    <div class="flex items-center space-x-3" onclick="event.stopPropagation();">
+                    <div class="flex items-center space-x-3">
                       <%= if paper.file_path do %>
-                        <.link href={"/api/papers/#{paper.id}/view"} target="_blank" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                        <.link href={"/api/papers/#{paper.id}/view"} target="_blank" class="text-blue-600 hover:text-blue-800 text-sm font-medium" onclick="event.stopPropagation();">
                           View
                         </.link>
                       <% end %>
-                      <.link navigate={~p"/papers/#{paper}/edit"} class="text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                      <.link navigate={~p"/papers/#{paper}/edit"} class="text-indigo-600 hover:text-indigo-800 text-sm font-medium" onclick="event.stopPropagation();">
                         Edit
                       </.link>
-                      <.link
-                        phx-click={JS.push("delete", value: %{id: paper.id}) |> hide("##{id}")}
+                      <button
+                        phx-click="delete"
+                        phx-value-id={paper.id}
                         data-confirm="Are you sure?"
-                        class="text-red-600 hover:text-red-800 text-sm font-medium"
+                        class="text-red-600 hover:text-red-800 text-sm font-medium bg-transparent border-none cursor-pointer"
                       >
                         Delete
-                      </.link>
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -130,6 +131,8 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
 
   @impl true
   def handle_event("delete", %{"id" => id}, socket) do
+    # Convert string ID to integer if needed
+    id = if is_binary(id), do: String.to_integer(id), else: id
     paper = Papers.get_paper!(socket.assigns.current_scope, id)
     {:ok, _} = Papers.delete_paper(socket.assigns.current_scope, paper)
 
