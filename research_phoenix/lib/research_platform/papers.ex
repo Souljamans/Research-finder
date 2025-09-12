@@ -45,6 +45,125 @@ defmodule ResearchPlatform.Papers do
   end
 
   @doc """
+  Searches papers using full-text search.
+  
+  ## Examples
+  
+      iex> search_papers(scope, "machine learning")
+      [%Paper{}, ...]
+      
+      iex> search_papers(scope, "author:smith")
+      [%Paper{}, ...]
+  """
+  def search_papers(%Scope{} = scope, query) when is_binary(query) and query != "" do
+    # Parse search query to extract filters
+    {search_term, filters} = parse_search_query(query)
+    
+    base_query = from(p in Paper, where: p.user_id == ^scope.user.id)
+    
+    query_with_search = 
+      if search_term != "" do
+        from p in base_query,
+          where: fragment("? @@ plainto_tsquery('english', ?)", p.search_vector, ^search_term),
+          order_by: [desc: fragment("ts_rank(?, plainto_tsquery('english', ?))", p.search_vector, ^search_term)]
+      else
+        base_query
+      end
+    
+    final_query = apply_search_filters(query_with_search, filters)
+    
+    Repo.all(final_query)
+  end
+
+  def search_papers(%Scope{} = scope, _query) do
+    list_papers(scope)
+  end
+
+  @doc """
+  Gets search suggestions based on partial input.
+  """
+  def get_search_suggestions(%Scope{} = scope, query) when is_binary(query) and query != "" do
+    # Get all papers for this user and extract suggestions in Elixir
+    papers = from(p in Paper,
+      where: p.user_id == ^scope.user.id,
+      select: %{title: p.title, authors: p.authors, keywords: p.keywords}
+    ) |> Repo.all()
+    
+    query_lower = String.downcase(query)
+    
+    # Extract all unique titles, authors, and keywords
+    titles = papers |> Enum.map(& &1.title) |> Enum.filter(& &1) |> Enum.uniq()
+    authors = papers |> Enum.flat_map(& &1.authors || []) |> Enum.uniq()
+    keywords = papers |> Enum.flat_map(& &1.keywords || []) |> Enum.uniq()
+    
+    title_matches = filter_suggestions(titles, query_lower)
+    author_matches = filter_suggestions(authors, query_lower)
+    keyword_matches = filter_suggestions(keywords, query_lower)
+    
+    (title_matches ++ author_matches ++ keyword_matches)
+    |> Enum.uniq()
+    |> Enum.take(10)
+  end
+
+  def get_search_suggestions(_scope, _query), do: []
+
+  defp parse_search_query(query) do
+    # Simple parser for filters like "author:smith" or "keyword:machine"
+    filters = Regex.scan(~r/(\w+):(\w+)/, query)
+    |> Enum.map(fn [_full, field, value] -> {field, value} end)
+    
+    search_term = Regex.replace(~r/\w+:\w+/, query, "")
+    |> String.trim()
+    
+    {search_term, filters}
+  end
+
+  defp apply_search_filters(query, []), do: query
+  defp apply_search_filters(query, [{field, value} | rest]) do
+    filtered_query = case field do
+      "author" ->
+        from p in query,
+          where: fragment("EXISTS (SELECT 1 FROM unnest(?) AS author WHERE LOWER(author) LIKE ?)", 
+                         p.authors, ^"%#{String.downcase(value)}%")
+      "keyword" ->
+        from p in query,
+          where: fragment("EXISTS (SELECT 1 FROM unnest(?) AS keyword WHERE LOWER(keyword) LIKE ?)", 
+                         p.keywords, ^"%#{String.downcase(value)}%")
+      "title" ->
+        from p in query, where: ilike(p.title, ^"%#{value}%")
+      "date" ->
+        cutoff_date = get_date_cutoff(value)
+        if cutoff_date do
+          from p in query, where: p.created_at >= ^cutoff_date
+        else
+          query
+        end
+      _ -> query
+    end
+    
+    apply_search_filters(filtered_query, rest)
+  end
+
+  defp get_date_cutoff("week") do
+    DateTime.utc_now() |> DateTime.add(-7, :day)
+  end
+  defp get_date_cutoff("month") do
+    DateTime.utc_now() |> DateTime.add(-30, :day) 
+  end
+  defp get_date_cutoff("year") do
+    DateTime.utc_now() |> DateTime.add(-365, :day)
+  end
+  defp get_date_cutoff(_), do: nil
+
+  defp filter_suggestions(items, query) do
+    items
+    |> Enum.filter(fn item -> 
+      item && String.contains?(String.downcase(item), query)
+    end)
+    |> Enum.take(3)
+  end
+
+  @doc """
   Gets a single paper.
 
   Raises `Ecto.NoResultsError` if the Paper does not exist.

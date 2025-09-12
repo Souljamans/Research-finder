@@ -16,17 +16,95 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
         </.link>
         
         <!-- Search Bar -->
-        <div class="flex-1 max-w-md">
-          <form phx-change="search" phx-submit="search" class="relative">
-            <.icon name="hero-magnifying-glass" class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              name="query"
-              value={@search_query}
-              placeholder="Search papers by title, authors, or keywords..."
-              class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-              phx-debounce="300"
-            />
+        <div class="flex-1 max-w-2xl">
+          <form phx-change="search" phx-submit="search" class="space-y-3">
+            <div class="relative">
+              <.icon name="hero-magnifying-glass" class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                name="query"
+                value={@search_query}
+                placeholder="Search papers... Try: 'machine learning', 'author:smith', 'keyword:AI'"
+                class="w-full pl-10 pr-12 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                phx-debounce="300"
+                phx-focus="show_suggestions"
+                phx-blur="hide_suggestions"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                phx-click="toggle_filters"
+                class="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <.icon name="hero-adjustments-horizontal" class="w-4 h-4" />
+              </button>
+              
+              <%= if @show_suggestions and length(@search_suggestions) > 0 do %>
+                <div class="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
+                  <%= for suggestion <- @search_suggestions do %>
+                    <button
+                      type="button"
+                      phx-click="select_suggestion"
+                      phx-value-suggestion={suggestion}
+                      class="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm border-b border-gray-100 last:border-b-0 text-black"
+                    >
+                      <%= suggestion %>
+                    </button>
+                  <% end %>
+                </div>
+              <% end %>
+            </div>
+            
+            <%= if @show_filters do %>
+              <div class="bg-gray-50 p-4 rounded-lg border space-y-3">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Author</label>
+                    <input
+                      type="text"
+                      name="author_filter"
+                      value={@filters.author}
+                      placeholder="Author name..."
+                      class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      phx-debounce="300"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Keyword</label>
+                    <input
+                      type="text"
+                      name="keyword_filter"
+                      value={@filters.keyword}
+                      placeholder="Keyword..."
+                      class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                      phx-debounce="300"
+                    />
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Date Range</label>
+                    <select
+                      name="date_range"
+                      value={@filters.date_range}
+                      class="w-full px-3 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">All time</option>
+                      <option value="week">Last week</option>
+                      <option value="month">Last month</option>
+                      <option value="year">Last year</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="flex justify-end space-x-2">
+                  <button
+                    type="button"
+                    phx-click="clear_filters"
+                    class="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              </div>
+            <% end %>
           </form>
         </div>
         
@@ -118,15 +196,76 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
      socket
      |> assign(:page_title, "Listing Papers")
      |> assign(:search_query, "")
+     |> assign(:show_filters, false)
+     |> assign(:show_suggestions, false)
+     |> assign(:search_suggestions, [])
+     |> assign(:filters, %{author: "", keyword: "", date_range: ""})
      |> stream(:papers, list_papers(socket.assigns.current_scope))}
   end
 
   @impl true
-  def handle_event("search", %{"query" => query}, socket) do
+  def handle_event("search", params, socket) do
+    query = Map.get(params, "query", socket.assigns.search_query)
+    
+    filters = %{
+      author: Map.get(params, "author_filter", socket.assigns.filters.author),
+      keyword: Map.get(params, "keyword_filter", socket.assigns.filters.keyword),
+      date_range: Map.get(params, "date_range", socket.assigns.filters.date_range)
+    }
+    
+    # Build combined query with filters
+    combined_query = build_combined_query(query, filters)
+    
+    # Get suggestions if query is not empty
+    suggestions = if String.trim(query) != "" and String.length(String.trim(query)) >= 2 do
+      Papers.get_search_suggestions(socket.assigns.current_scope, query)
+    else
+      []
+    end
+    
     {:noreply,
      socket
      |> assign(:search_query, query)
-     |> stream(:papers, search_papers(socket.assigns.current_scope, query), reset: true)}
+     |> assign(:filters, filters)
+     |> assign(:search_suggestions, suggestions)
+     |> stream(:papers, search_papers(socket.assigns.current_scope, combined_query), reset: true)}
+  end
+
+  @impl true
+  def handle_event("toggle_filters", _params, socket) do
+    {:noreply, assign(socket, :show_filters, !socket.assigns.show_filters)}
+  end
+
+  @impl true
+  def handle_event("clear_filters", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:filters, %{author: "", keyword: "", date_range: ""})
+     |> assign(:search_query, "")
+     |> assign(:search_suggestions, [])
+     |> assign(:show_suggestions, false)
+     |> stream(:papers, list_papers(socket.assigns.current_scope), reset: true)}
+  end
+
+  @impl true
+  def handle_event("show_suggestions", _params, socket) do
+    {:noreply, assign(socket, :show_suggestions, true)}
+  end
+
+  @impl true
+  def handle_event("hide_suggestions", _params, socket) do
+    # Add a small delay before hiding to allow clicking on suggestions
+    Process.send_after(self(), :hide_suggestions_delayed, 100)
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("select_suggestion", %{"suggestion" => suggestion}, socket) do
+    {:noreply,
+     socket
+     |> assign(:search_query, suggestion)
+     |> assign(:show_suggestions, false)
+     |> stream(:papers, search_papers(socket.assigns.current_scope, suggestion), reset: true)}
   end
 
   @impl true
@@ -145,6 +284,11 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
     {:noreply, stream(socket, :papers, list_papers(socket.assigns.current_scope), reset: true)}
   end
 
+  @impl true
+  def handle_info(:hide_suggestions_delayed, socket) do
+    {:noreply, assign(socket, :show_suggestions, false)}
+  end
+
   defp list_papers(current_scope) do
     Papers.list_papers(current_scope)
   end
@@ -154,31 +298,36 @@ defmodule ResearchPlatformWeb.PaperLive.Index do
   end
 
   defp search_papers(current_scope, query) do
-    Papers.list_papers(current_scope)
-    |> Enum.filter(fn paper ->
-      query_lower = String.downcase(query)
-      
-      title_match = paper.title && String.contains?(String.downcase(paper.title), query_lower)
-      authors_match = search_in_field(paper.authors, query_lower)
-      abstract_match = paper.abstract && String.contains?(String.downcase(paper.abstract), query_lower)
-      keywords_match = search_in_field(paper.keywords, query_lower)
-      
-      title_match || authors_match || abstract_match || keywords_match
-    end)
+    Papers.search_papers(current_scope, query)
   end
 
-  defp search_in_field(field, query) when is_list(field) do
-    field
-    |> Enum.any?(fn item -> 
-      item && String.contains?(String.downcase(to_string(item)), query)
-    end)
+  defp build_combined_query(base_query, filters) do
+    query_parts = [base_query]
+    
+    query_parts =
+      if filters.author != "" do
+        ["author:#{filters.author}" | query_parts]
+      else
+        query_parts
+      end
+    
+    query_parts =
+      if filters.keyword != "" do
+        ["keyword:#{filters.keyword}" | query_parts]
+      else
+        query_parts
+      end
+    
+    query_parts =
+      if filters.date_range != "" do
+        ["date:#{filters.date_range}" | query_parts]
+      else
+        query_parts
+      end
+    
+    Enum.join(query_parts, " ")
+    |> String.trim()
   end
-
-  defp search_in_field(field, query) when is_binary(field) do
-    String.contains?(String.downcase(field), query)
-  end
-
-  defp search_in_field(_, _), do: false
 
   defp format_authors(authors) when is_list(authors), do: Enum.join(authors, ", ")
   defp format_authors(authors) when is_binary(authors), do: authors
