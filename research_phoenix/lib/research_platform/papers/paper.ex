@@ -2,6 +2,46 @@ defmodule ResearchPlatform.Papers.Paper do
   use Ecto.Schema
   import Ecto.Changeset
 
+  defmodule Form do
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key {:id, :id, autogenerate: false}
+    schema "papers_form" do
+      field :title, :string
+      field :authors, :string
+      field :abstract, :string
+      field :keywords, :string
+      field :file_path, :string
+      field :file_size, :integer
+      field :metadata, :map
+      field :upload_date, :utc_datetime
+      field :created_at, :utc_datetime
+      field :updated_at, :utc_datetime
+      field :inserted_at, :utc_datetime
+      field :user_id, :integer
+    end
+
+    def changeset(form, attrs, user_scope) do
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+      
+      changeset = form
+      |> cast(attrs, [:title, :authors, :abstract, :keywords, :file_path, :file_size, :metadata])
+      |> put_change(:user_id, user_scope.user.id)
+      |> put_change(:updated_at, now)
+
+      # Only apply strict validation on submit, not during live validation
+      case changeset.action do
+        action when action in [:insert, :update] ->
+          changeset
+          |> validate_required([:title])
+          |> validate_length(:title, min: 1)
+        _ ->
+          changeset
+      end
+    end
+  end
+
   schema "papers" do
     field :title, :string
     field :authors, {:array, :string}
@@ -41,32 +81,12 @@ defmodule ResearchPlatform.Papers.Paper do
     end
   end
 
-  @doc false
-  def form_changeset(paper, attrs, user_scope) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-    
-    changeset = paper
-    |> cast(attrs, [:title, :authors, :abstract, :keywords, :file_path, :file_size, :metadata])
-    # Don't normalize for form display - keep strings as strings
-    |> put_change(:user_id, user_scope.user.id)
-    |> put_change(:updated_at, now)
-    |> maybe_put_timestamps(paper.id)
-
-    # Only apply strict validation on submit, not during live validation
-    case changeset.action do
-      action when action in [:insert, :update] ->
-        changeset
-        |> validate_required([:title])
-        |> validate_length(:title, min: 1)
-      _ ->
-        changeset
-    end
-  end
 
   defp normalize_authors(changeset) do
     case get_change(changeset, :authors) do
       nil -> 
-        put_change(changeset, :authors, [])
+        # Don't change the field if there's no change
+        changeset
       authors when is_binary(authors) ->
         # Convert string to array, splitting by newlines and filtering empty lines
         author_list = 
@@ -77,6 +97,7 @@ defmodule ResearchPlatform.Papers.Paper do
         
         put_change(changeset, :authors, author_list)
       authors when is_list(authors) -> 
+        # Already an array, keep as-is
         changeset
     end
   end
@@ -84,7 +105,8 @@ defmodule ResearchPlatform.Papers.Paper do
   defp normalize_keywords(changeset) do
     case get_change(changeset, :keywords) do
       nil -> 
-        put_change(changeset, :keywords, [])
+        # Don't change the field if there's no change
+        changeset
       keywords when is_binary(keywords) ->
         # Convert string to array, splitting by commas and filtering empty entries
         keyword_list = 
@@ -95,6 +117,7 @@ defmodule ResearchPlatform.Papers.Paper do
         
         put_change(changeset, :keywords, keyword_list)
       keywords when is_list(keywords) -> 
+        # Already an array, keep as-is
         changeset
     end
   end

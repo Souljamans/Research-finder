@@ -1,6 +1,6 @@
 # Research Paper Management Platform
 
-A full-stack application for managing research papers with PDF upload, note-taking, and search capabilities.
+A Phoenix/Elixir application for managing research papers with PDF upload, note-taking, and search capabilities.
 
 ## Quick Start
 
@@ -9,24 +9,21 @@ A full-stack application for managing research papers with PDF upload, note-taki
    ./dev/sh/runDB.sh
    ```
 
-2. **Install dependencies:**
+2. **Install dependencies and setup:**
    ```bash
-   npm run setup
+   cd research_phoenix
+   mix setup
    ```
 
-3. **Start development servers:**
+3. **Start the Phoenix server:**
    ```bash
-   # Terminal 1 - Backend
-   npm run dev:backend
-   
-   # Terminal 2 - Frontend  
-   npm run dev:frontend
+   cd research_phoenix
+   mix phx.server
    ```
 
 4. **Access the application:**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:3001
-   - Health Check: http://localhost:3001/api/health
+   - Web Application: http://localhost:4000
+   - LiveDashboard: http://localhost:4000/dev/dashboard
 
 ## Database Management
 
@@ -45,8 +42,11 @@ The database can be managed using the `dev/sh/runDB.sh` script:
 ## Project Structure
 
 ```
-├── frontend/           # React frontend
-├── backend/            # Express.js backend
+├── research_phoenix/   # Phoenix/Elixir application
+│   ├── lib/           # Application code
+│   ├── assets/        # Frontend assets (JS/CSS)
+│   ├── priv/          # Database migrations, static assets
+│   └── test/          # Test files
 ├── dev/
 │   ├── sh/
 │   │   └── runDB.sh   # Database management script
@@ -57,20 +57,36 @@ The database can be managed using the `dev/sh/runDB.sh` script:
 └── docker-compose.yml # Database container config
 ```
 
+## Technology Stack
+
+- **Framework**: Phoenix 1.8 with LiveView
+- **Language**: Elixir 1.15+
+- **Database**: PostgreSQL with Ecto
+- **Frontend**: Phoenix LiveView, Tailwind CSS, DaisyUI
+- **File Processing**: PDF processing with Elixir libraries
+- **Authentication**: Phoenix.Token and Bcrypt
+
 ## Development Status
 
 ### ✅ Phase 1: Project Setup & Infrastructure
-- [x] Project structure initialized
+- [x] Phoenix project initialized with LiveView
 - [x] Docker-based PostgreSQL database with runDB.sh script
 - [x] File storage system for PDFs
-- [x] Authentication system with JWT
+- [x] Authentication system with Phoenix.Token
 - [x] Development environment configured
 
 ### ✅ Phase 2: Core Data Models & API  
 - [x] Database schema for papers, authors, notes, tags
 - [x] Paper and Notes models with full CRUD operations
-- [x] REST API endpoints with authentication
-- [x] File upload and management system
-- [x] Full-text search capabilities
+- [x] LiveView interfaces for paper management
+- [x] File upload and PDF processing system
+- [x] Full-text search capabilities with PostgreSQL
 
-**Next**: Phase 3 - PDF Upload & Processing
+### ✅ Phase 3: PDF Upload & Processing
+- [x] PDF upload functionality with validation
+- [x] PDF text extraction and metadata parsing
+- [x] File storage and retrieval system
+- [x] Progress indicators and error handling
+- [x] PDF viewer integration
+
+**Current**: Fully functional Phoenix application with PDF management, search, and user interface

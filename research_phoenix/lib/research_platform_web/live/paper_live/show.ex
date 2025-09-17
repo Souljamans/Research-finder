@@ -16,6 +16,16 @@ defmodule ResearchPlatformWeb.PaperLive.Show do
           <.button navigate={~p"/papers"}>
             <.icon name="hero-arrow-left" />
           </.button>
+          <%= if @paper.file_path do %>
+            <.button navigate={~p"/papers/#{@paper}/viewer"} variant="primary">
+              <.icon name="hero-document" class="mr-1" /> Open Viewer
+            </.button>
+            <.button>
+              <.link href={"/api/papers/#{@paper.id}/view"} target="_blank" class="flex items-center text-inherit no-underline">
+                <.icon name="hero-arrow-top-right-on-square" class="mr-1" /> View PDF
+              </.link>
+            </.button>
+          <% end %>
           <.button variant="primary" navigate={~p"/papers/#{@paper}/edit?return_to=show"}>
             <.icon name="hero-pencil-square" /> Edit paper
           </.button>

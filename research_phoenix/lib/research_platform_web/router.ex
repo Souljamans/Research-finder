@@ -29,6 +29,7 @@ defmodule ResearchPlatformWeb.Router do
     
     post "/papers/upload", UploadController, :upload_pdf
     get "/papers/:id/download", UploadController, :download_pdf
+    get "/papers/:id/view", UploadController, :view_pdf
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
@@ -63,6 +64,7 @@ defmodule ResearchPlatformWeb.Router do
     live "/papers", PaperLive.Index, :index
     live "/papers/new", PaperLive.Form, :new
     live "/papers/:id", PaperLive.Show, :show
+    live "/papers/:id/viewer", PaperLive.Viewer, :viewer
     live "/papers/:id/edit", PaperLive.Form, :edit
 
     get "/users/settings", UserSettingsController, :edit

@@ -4,14 +4,15 @@ defmodule ResearchPlatform.Repo.Migrations.CreateUsersAuthTables do
   def change do
     execute "CREATE EXTENSION IF NOT EXISTS citext", ""
 
-    # Users table already exists from Node.js version
-    # Modify existing table to add Phoenix auth fields if needed
-    alter table(:users) do
-      add_if_not_exists :email, :citext
-      add_if_not_exists :hashed_password, :string  
-      add_if_not_exists :confirmed_at, :utc_datetime
-      add_if_not_exists :inserted_at, :utc_datetime
-      add_if_not_exists :updated_at, :utc_datetime
+    # Create users table
+    create_if_not_exists table(:users) do
+      add :username, :string
+      add :email, :citext, null: false
+      add :hashed_password, :string, null: false
+      add :password_hash, :string  # Legacy field
+      add :confirmed_at, :utc_datetime
+
+      timestamps(type: :utc_datetime)
     end
 
     create_if_not_exists unique_index(:users, [:email])
