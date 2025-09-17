@@ -326,8 +326,8 @@ defmodule ResearchPlatform.Papers do
     * {:deleted, %Note{}}
 
   """
-  def subscribe_notes(%Scope{} = scope) do
-    key = scope.user.id
+  def subscribe_notes(%Scope{} = scope, paper_id \\ nil) do
+    key = if paper_id, do: "#{scope.user.id}:paper:#{paper_id}", else: scope.user.id
 
     Phoenix.PubSub.subscribe(ResearchPlatform.PubSub, "user:#{key}:notes")
   end
@@ -347,8 +347,13 @@ defmodule ResearchPlatform.Papers do
       [%Note{}, ...]
 
   """
-  def list_notes(%Scope{} = scope) do
-    Repo.all_by(Note, user_id: scope.user.id)
+  def list_notes(%Scope{} = scope, paper_id \\ nil) do
+    query = from n in Note, where: n.user_id == ^scope.user.id
+    
+    query = if paper_id, do: from(n in query, where: n.paper_id == ^paper_id), else: query
+    query = from n in query, order_by: [desc: n.inserted_at]
+    
+    Repo.all(query)
   end
 
   @doc """
@@ -381,7 +386,7 @@ defmodule ResearchPlatform.Papers do
       {:error, %Ecto.Changeset{}}
 
   """
-  def create_note(%Scope{} = scope, attrs) do
+  def create_note(attrs, %Scope{} = scope) do
     with {:ok, note = %Note{}} <-
            %Note{}
            |> Note.changeset(attrs, scope)
@@ -427,7 +432,7 @@ defmodule ResearchPlatform.Papers do
       {:error, %Ecto.Changeset{}}
 
   """
-  def delete_note(%Scope{} = scope, %Note{} = note) do
+  def delete_note(%Note{} = note, %Scope{} = scope) do
     true = note.user_id == scope.user.id
 
     with {:ok, note = %Note{}} <-
@@ -446,9 +451,22 @@ defmodule ResearchPlatform.Papers do
       %Ecto.Changeset{data: %Note{}}
 
   """
-  def change_note(%Scope{} = scope, %Note{} = note, attrs \\ %{}) do
-    true = note.user_id == scope.user.id
+  def change_note(%Note{} = note, attrs \\ %{}) do
+    Note.changeset(note, attrs, %Scope{user: %{id: note.user_id || 0}})
+  end
 
-    Note.changeset(note, attrs, scope)
+  @doc """
+  Searches notes by content within a paper.
+  """
+  def search_notes(%Scope{} = scope, paper_id, query) do
+    search_query = "%#{query}%"
+    
+    from(n in Note,
+      where: n.user_id == ^scope.user.id and 
+             n.paper_id == ^paper_id and
+             ilike(n.content, ^search_query),
+      order_by: [desc: n.inserted_at]
+    )
+    |> Repo.all()
   end
 end

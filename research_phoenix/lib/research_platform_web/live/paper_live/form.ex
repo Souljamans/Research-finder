@@ -3,6 +3,7 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
 
   alias ResearchPlatform.Papers
   alias ResearchPlatform.Papers.Paper
+  alias ResearchPlatform.Services.PdfService
 
   on_mount {ResearchPlatformWeb.UserAuth, :default}
 
@@ -129,38 +130,60 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   def handle_event("upload_pdf", _params, socket) do
     uploaded_files =
       consume_uploaded_entries(socket, :pdf_file, fn %{path: path}, entry ->
-        dest = Path.join("priv/static/uploads/pdfs", "#{entry.client_name}")
+        dest = Path.join("priv/static/uploads/pdfs", "#{PdfService.generate_filename(entry.client_name, socket.assigns.current_scope.user.id)}")
         File.cp!(path, dest)
         {:ok, dest}
       end)
 
     case uploaded_files do
       [file_path] ->
-        # Convert relative path to absolute path for PDF extraction
-        absolute_file_path = Path.expand(file_path)
-        
-        # Try to extract content from PDF, fallback to filename parsing if that fails
-        
-        paper_attrs = try do
-          case extract_pdf_content(absolute_file_path) do
-            {:ok, extracted_content} ->
-              %{
-              title: extracted_content.title || extract_title_from_filename(Path.basename(file_path)) || "Uploaded PDF",
-              authors: convert_list_to_array(extracted_content.authors || []),
-              abstract: extracted_content.abstract || "PDF uploaded - please edit to add details",
-              keywords: convert_list_to_array(extracted_content.keywords || []),
+        # Use the centralized PDF service for processing
+        case PdfService.process_uploaded_pdf(file_path, socket.assigns.current_scope) do
+          {:ok, processed_metadata} ->
+            # Extract filename-based info as fallback
+            filename = Path.basename(file_path)
+            fallback_title = PdfService.extract_title_from_filename(filename)
+            fallback_authors = PdfService.extract_authors_from_filename(filename)
+            
+            paper_attrs = %{
+              title: clean_extracted_title(processed_metadata.extracted_title) || fallback_title || "Uploaded PDF",
+              authors: convert_list_to_array(
+                case processed_metadata.extracted_authors do
+                  [] -> fallback_authors
+                  nil -> fallback_authors
+                  authors -> authors
+                end
+              ),
+              abstract: "PDF uploaded - please edit to add details",
+              keywords: convert_list_to_array(
+                case processed_metadata.extracted_keywords do
+                  [] -> extract_keywords_from_filename(filename)
+                  nil -> extract_keywords_from_filename(filename)
+                  keywords -> keywords
+                end
+              ),
               file_path: Path.basename(file_path),
               file_size: File.stat!(file_path).size,
-              metadata: %{
-                original_filename: Path.basename(file_path),
-                upload_date: DateTime.utc_now() |> DateTime.truncate(:second),
-                extracted_text: String.slice(extracted_content.text || "", 0, 1000),
-                extraction_method: "pdf_content"
-              }
+              metadata: processed_metadata
             }
-          {:error, _reason} ->
-            # Fallback to filename parsing
-            %{
+            
+            case Papers.create_paper(socket.assigns.current_scope, paper_attrs) do
+              {:ok, paper} ->
+                {:noreply,
+                 socket
+                 |> put_flash(:info, "PDF uploaded and processed successfully - please review and edit the details")
+                 |> push_navigate(to: ~p"/papers/#{paper}/edit")}
+                 
+              {:error, changeset} ->
+                File.rm(file_path)  # Clean up on error
+                {:noreply,
+                 socket
+                 |> put_flash(:error, "Failed to save paper: #{inspect(changeset.errors)}")}
+            end
+            
+          {:error, reason} ->
+            # Fallback creation even if PDF processing failed
+            paper_attrs = %{
               title: extract_title_from_filename(Path.basename(file_path)) || "Uploaded PDF",
               authors: [],
               abstract: "PDF uploaded - please edit to add details",
@@ -168,42 +191,25 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
               file_path: Path.basename(file_path),
               file_size: File.stat!(file_path).size,
               metadata: %{
+                processing_error: reason,
                 original_filename: Path.basename(file_path),
-                upload_date: DateTime.utc_now() |> DateTime.truncate(:second),
-                extraction_method: "filename_only"
+                upload_date: DateTime.utc_now() |> DateTime.truncate(:second)
               }
             }
-          end
-        rescue
-          _error ->
-            # Fallback to filename parsing on exception
-            %{
-              title: extract_title_from_filename(Path.basename(file_path)) || "Uploaded PDF",
-              authors: [],
-              abstract: "PDF uploaded - please edit to add details",
-              keywords: [],
-              file_path: Path.basename(file_path),
-              file_size: File.stat!(file_path).size,
-              metadata: %{
-                original_filename: Path.basename(file_path),
-                upload_date: DateTime.utc_now() |> DateTime.truncate(:second),
-                extraction_method: "exception_fallback"
-              }
-            }
-        end
-        
-        case Papers.create_paper(socket.assigns.current_scope, paper_attrs) do
-          {:ok, paper} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "PDF uploaded successfully - please edit the details")
-             |> push_navigate(to: ~p"/papers/#{paper}/edit")}
-             
-          {:error, changeset} ->
-            File.rm(file_path)  # Clean up on error
-            {:noreply,
-             socket
-             |> put_flash(:error, "Failed to save paper: #{inspect(changeset.errors)}")}
+            
+            case Papers.create_paper(socket.assigns.current_scope, paper_attrs) do
+              {:ok, paper} ->
+                {:noreply,
+                 socket
+                 |> put_flash(:info, "PDF uploaded but processing failed: #{reason}. Please add details manually.")
+                 |> push_navigate(to: ~p"/papers/#{paper}/edit")}
+                 
+              {:error, changeset} ->
+                File.rm(file_path)  # Clean up on error
+                {:noreply,
+                 socket
+                 |> put_flash(:error, "Failed to save paper: #{inspect(changeset.errors)}")}
+            end
         end
         
       [] ->
@@ -353,6 +359,26 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
     |> String.replace(~r/^\d{4}\s+/, "")
     # Clean up multiple spaces
     |> String.replace(~r/\s+/, " ")
+  end
+
+  # Clean extracted title to remove line numbers, page headers, etc.
+  defp clean_extracted_title(nil), do: nil
+  defp clean_extracted_title(title) when is_binary(title) do
+    title
+    |> String.trim()
+    # Remove leading numbers (line numbers, page numbers)
+    |> String.replace(~r/^\d+\s*/, "")
+    # Remove leading/trailing punctuation except proper sentence endings
+    |> String.replace(~r/^[^\w\s]+|[^\w\s\.!?]+$/u, "")
+    # Remove common PDF artifacts
+    |> String.replace(~r/^\s*(Abstract|ABSTRACT|Title|TITLE)[\s:]*/, "")
+    # Clean up multiple spaces
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+    |> case do
+      "" -> nil
+      cleaned_title -> cleaned_title
+    end
   end
 
   defp extract_pdf_content(file_path) do
@@ -666,4 +692,41 @@ defmodule ResearchPlatformWeb.PaperLive.Form do
   defp convert_list_to_array(list) when is_list(list), do: list
   defp convert_list_to_array(value) when is_binary(value), do: [value]
   defp convert_list_to_array(_), do: []
+
+  # Helper function to extract keywords from PDF metadata
+  defp extract_keywords_from_pdf_metadata(processed_metadata) do
+    # Try to extract keywords from PDF metadata or other sources
+    cond do
+      processed_metadata[:pdf_metadata] && processed_metadata[:pdf_metadata]["keywords"] ->
+        processed_metadata[:pdf_metadata]["keywords"]
+        |> String.split([",", ";"])
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        
+      processed_metadata[:pdf_metadata] && processed_metadata[:pdf_metadata]["subject"] ->
+        [processed_metadata[:pdf_metadata]["subject"]]
+        
+      true ->
+        []
+    end
+  end
+
+  # Simple keyword extraction from filename
+  defp extract_keywords_from_filename(filename) do
+    # Look for common research terms in the filename
+    filename_lower = String.downcase(filename)
+    
+    # Academic/research terms that might appear in filenames
+    potential_keywords = [
+      "breastfeeding", "feeding", "lactation", "milk", "nursing",
+      "prediction", "predicting", "assessment", "evaluation", "study",
+      "research", "analysis", "duration", "tool", "scale", "measure",
+      "intervention", "treatment", "therapy", "care", "health",
+      "maternal", "infant", "baby", "child", "pediatric", "perinatal"
+    ]
+    
+    potential_keywords
+    |> Enum.filter(&String.contains?(filename_lower, &1))
+    |> Enum.take(3)  # Limit to 3 keywords
+  end
 end

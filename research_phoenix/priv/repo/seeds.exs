@@ -22,33 +22,27 @@ test_password = "adminpassword123"
 # Check if user already exists
 case Accounts.get_user_by_email(test_email) do
   nil ->
-    # Create user directly using proper changesets
-    user_attrs = %{
+    # Create and hash the password
+    hashed_password = Bcrypt.hash_pwd_salt(test_password)
+    
+    # Create user directly with all fields
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    user_changeset = %User{
+      username: test_username,
       email: test_email,
-      username: test_username
+      hashed_password: hashed_password,
+      confirmed_at: now,
+      inserted_at: now,
+      updated_at: now
     }
     
-    # First create user with email/username
-    case Accounts.register_user(user_attrs) do
-      {:ok, user} ->
-        # Then set the password
-        case Accounts.update_user_password(user, %{password: test_password}) do
-          {:ok, {user_with_password, _tokens}} ->
-            # Confirm the user (skip email confirmation)
-            _confirmed_user = 
-              user_with_password
-              |> User.confirm_changeset()
-              |> Repo.update!()
-            
-            IO.puts("✅ Created test admin user:")
-            IO.puts("   Username: #{test_username}")
-            IO.puts("   Email: #{test_email}")
-            IO.puts("   Password: #{test_password}")
-            IO.puts("   Status: Confirmed and ready to use")
-            
-          {:error, password_changeset} ->
-            IO.puts("❌ Failed to set password: #{inspect(password_changeset.errors)}")
-        end
+    case Repo.insert(user_changeset) do
+      {:ok, _user} ->
+        IO.puts("✅ Created test admin user:")
+        IO.puts("   Username: #{test_username}")
+        IO.puts("   Email: #{test_email}")
+        IO.puts("   Password: #{test_password}")
+        IO.puts("   Status: Confirmed and ready to use")
         
       {:error, changeset} ->
         IO.puts("❌ Failed to create user: #{inspect(changeset.errors)}")

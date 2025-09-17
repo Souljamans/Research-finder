@@ -64,6 +64,7 @@ defmodule ResearchPlatformWeb.Router do
     live "/papers", PaperLive.Index, :index
     live "/papers/new", PaperLive.Form, :new
     live "/papers/:id", PaperLive.Show, :show
+    live "/papers/:id/viewer", PaperLive.Viewer, :viewer
     live "/papers/:id/edit", PaperLive.Form, :edit
 
     get "/users/settings", UserSettingsController, :edit
