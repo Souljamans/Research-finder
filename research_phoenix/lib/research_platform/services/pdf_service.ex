@@ -4,7 +4,6 @@ defmodule ResearchPlatform.Services.PdfService do
   Uses external tools like pdftotext and pdfinfo for processing.
   """
 
-  alias ResearchPlatform.Papers
 
   @upload_dir "priv/static/uploads/pdfs"
   
@@ -19,7 +18,7 @@ defmodule ResearchPlatform.Services.PdfService do
         processed_metadata = %{
           extracted_text: text,
           word_count: estimate_word_count(text),
-          extracted_title: metadata["title"] || extract_title_from_text(text),
+          extracted_title: get_best_title(metadata["title"], text),
           extracted_authors: extract_authors_from_text(text) || extract_authors_from_metadata(metadata),
           extracted_keywords: extract_keywords_from_text(text) || extract_keywords_from_metadata(metadata),
           pdf_metadata: metadata,
@@ -45,7 +44,7 @@ defmodule ResearchPlatform.Services.PdfService do
         processed_metadata = %{
           extracted_text: "",
           word_count: 0,
-          extracted_title: metadata["title"],
+          extracted_title: get_best_title(metadata["title"], ""),
           extracted_authors: extract_authors_from_metadata(metadata),
           extracted_keywords: extract_keywords_from_metadata(metadata),
           pdf_metadata: metadata,
@@ -237,88 +236,253 @@ defmodule ResearchPlatform.Services.PdfService do
   def estimate_word_count(_), do: 0
 
   def extract_title_from_text(text) when is_binary(text) do
-    lines = 
+    lines =
       text
       |> String.split("\n")
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
-      |> Enum.take(15)
+      |> Enum.take(25)
 
-    # Look for title pattern - often spans multiple lines after journal info
-    # Find lines that contain "Predicting" or other title-like content
-    title_lines = lines
-    |> Enum.with_index()
-    |> Enum.filter(fn {line, _index} ->
-      # Look for lines that contain title keywords and are not journal names or authors
-      Regex.match?(~r/(Predicting|Using|Assessment|Tool|Duration|Breastfeeding)/i, line) &&
-      !Regex.match?(~r/(J\s+Hum\s+Lact|\d{4}|EdD|RN|IBCLC|Abstract|et\s+al)/i, line) &&
-      !Regex.match?(~r/^[A-Z][a-z]+,\s*[A-Z]/i, line) && # Not author names starting with "Name,"
-      String.length(line) > 5
+    # Skip common header lines that aren't titles
+    filtered_lines = lines
+    |> Enum.reject(fn line ->
+      # Skip journal names, EBSCO headers, page numbers, etc.
+      Regex.match?(~r/^(J\s+Hum\s+Lact|Journal|EBSCO|Full\s*text|EBSCOhost|\d+$|page\s+\d+|vol\.|volume)/i, line) ||
+      # Skip university/institutional headers
+      Regex.match?(~r/(university|college|school|library|database|accessed|downloaded)/i, line) ||
+      # Skip very short lines (likely not titles)
+      String.length(line) < 4 ||
+      # Skip lines that are purely numbers or dates
+      Regex.match?(~r/^\d+[\d\s\-\/]*$/, line) ||
+      # Skip lines with just initials or short codes
+      Regex.match?(~r/^[A-Z]{2,4}[\d\s]*$/, line)
     end)
-    |> Enum.map(fn {line, _index} -> line end)
 
-    case title_lines do
-      [] -> nil
-      [single_line] -> single_line
-      multiple_lines ->
-        # Combine consecutive title lines
-        combined = multiple_lines
-        |> Enum.join(" ")
-        |> String.replace(~r/\s+/, " ")
-        |> String.trim()
-        
-        # Clean up the combined title
-        if String.length(combined) > 10 and String.length(combined) < 300 do
-          combined
+    # Look for title candidates - lines that could be titles
+    title_candidates = filtered_lines
+    |> Enum.with_index()
+    |> Enum.filter(fn {line, index} ->
+      # Good title indicators:
+      # - Not author names (which typically have credentials or comma patterns)
+      !Regex.match?(~r/^[A-Z][a-z]+,\s*[A-Z]/i, line) && # Not "Name, First"
+      !Regex.match?(~r/(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line) && # No credentials
+      !Regex.match?(~r/\bet\s+al\b/i, line) && # Not "et al"
+      !Regex.match?(~r/^Abstract\b/i, line) && # Not "Abstract"
+      # Should be substantial text
+      String.length(line) >= 8 &&
+      String.length(line) <= 200 &&
+      # Should contain some lowercase (mixed case suggests title)
+      Regex.match?(~r/[a-z]/, line) &&
+      # Prefer lines in first 20 positions (expanded from 15)
+      index < 20 &&
+      # Should look like title content (contains meaningful words)
+      title_like_content?(line) &&
+      # Allow "artificial intelligence" etc. when they appear in title context
+      # (but still filter out pure author name patterns)
+      !appears_to_be_pure_author_line?(line)
+    end)
+    |> Enum.map(fn {line, index} -> {line, index} end)
+
+    # Find the best title candidate
+    case title_candidates do
+      [] ->
+        # Fallback - take the first substantial line that's not obviously metadata
+        filtered_lines
+        |> Enum.find(fn line ->
+          String.length(line) >= 10 && String.length(line) <= 200 &&
+          Regex.match?(~r/[a-z]/, line) &&
+          !Regex.match?(~r/^\d+$/, line)
+        end)
+
+      [{single_line, _index}] ->
+        clean_title(single_line)
+
+      multiple_candidates ->
+        # Take the first substantial candidate, or combine if they seem related
+        [{first_line, first_index} | rest] = multiple_candidates
+
+        # Look for continuation lines that could be part of a multi-line title
+        potential_continuations = rest
+        |> Enum.take_while(fn {_line, index} ->
+          # Allow for slightly non-consecutive lines (gaps for formatting)
+          index <= first_index + 3
+        end)
+        |> Enum.filter(fn {line, _index} ->
+          # Continuation lines should also look like title content
+          title_like_content?(line) &&
+          !Regex.match?(~r/(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line) &&
+          !Regex.match?(~r/^[A-Z][a-z]+,\s*[A-Z]/i, line)
+        end)
+        |> Enum.map(fn {line, _index} -> line end)
+
+        # Combine lines that seem to be part of the same title
+        all_title_parts = [first_line | potential_continuations]
+        combined_title = Enum.join(all_title_parts, " ")
+
+        if String.length(combined_title) <= 300 && String.length(combined_title) >= String.length(first_line) do
+          clean_title(combined_title)
         else
-          List.first(multiple_lines)
+          clean_title(first_line)
         end
     end
   end
-  
+
+  defp title_like_content?(line) do
+    # Check if line contains words that typically appear in titles
+    word_count = String.split(line, ~r/\s+/) |> length()
+
+    # Should have multiple words (2 or more)
+    word_count >= 2 &&
+    # Contains common title words or patterns
+    (Regex.match?(~r/(the|impact|of|on|for|in|and|or|with|from|to|a|an|analysis|study|research|effect|effects|influence|role|using|toward|towards|approach|method|case|review|survey|investigation|examination|assessment|evaluation|comparison|development|implementation|application|framework|model|system|strategy|policy|management|design|optimization|enhancement|improvement|innovation|technology|artificial|intelligence|machine|learning|data|digital|smart|automation|future|trends|challenges|opportunities|risks|benefits|solutions|issues|problems|factors|considerations|implications|consequences|outcomes|results|findings|insights|perspectives|aspects|dimensions|elements|components|features|characteristics|properties|attributes|qualities|principles|concepts|theories|approaches|methods|techniques|strategies|practices|tools|instruments|measures|metrics|indicators|criteria|standards|guidelines|recommendations|best|practices|lessons|learned|job|loss|labor|market|government|governments|economic|economy|social|society|human|work|employment|unemployment|skills|training|education|technological|transformation|disruption|evolution|change|predicting|breastfeeding|duration|latch|assessment|tool|maternal|infant|newborn|feeding|lactation|birth|pregnancy|postpartum|clinical|hospital|healthcare|health|care|medical|nursing|patient|women|mother|baby|child|pediatric|obstetric|intervention|outcome|score|scale|validity|reliability|predictive|predictors|factors|associated|correlation|relationship)/i, line) ||
+    # Or contains technical/academic terms
+    Regex.match?(~r/(algorithm|analysis|application|approach|assessment|challenges|comparison|component|concept|conclusion|consideration|contribution|decision|development|discussion|effect|evaluation|examination|finding|framework|implication|implementation|improvement|investigation|limitation|management|method|model|optimization|outcome|perspective|policy|potential|problem|process|proposal|recommendation|research|result|review|solution|strategy|study|survey|system|technology|theory|tool)/i, line))
+  end
+
+  defp appears_to_be_pure_author_line?(line) do
+    # Check if this looks like a pure author line (names with credentials)
+    Regex.match?(~r/^[A-Z][a-z]+\s+[A-Z][a-z]+(\s+[A-Z][a-z]+)*,?\s*(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line) ||
+    # Or starts with author name pattern followed by comma
+    Regex.match?(~r/^[A-Z][a-z]+,\s*[A-Z]/i, line)
+  end
+
+  defp get_best_title(metadata_title, text) do
+    case metadata_title do
+      title when is_binary(title) and title != "" ->
+        # Use metadata title if it's a non-empty string
+        title
+      _ ->
+        # Fall back to text extraction
+        extract_title_from_text(text) || "Untitled"
+    end
+  end
+
+  defp clean_title(title) when is_binary(title) do
+    title
+    |> String.replace(~r/\s+/, " ")  # Normalize whitespace
+    |> String.replace(~r/^\W+|\W+$/, "")  # Remove leading/trailing non-word chars
+    |> String.trim()
+    |> case do
+      "" -> nil
+      cleaned -> cleaned
+    end
+  end
+
   def extract_title_from_text(_), do: nil
 
   def extract_authors_from_text(text) when is_binary(text) do
-    lines = 
+    lines =
       text
       |> String.split("\n")
-      |> Enum.take(20)
+      |> Enum.take(30)
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    # Look for lines that contain academic credentials (indicating author lines)
-    author_lines = lines
-    |> Enum.filter(fn line ->
-      # Look for lines with academic credentials that indicate authors
-      Regex.match?(~r/[A-Z][a-z]+\s+[A-Z][a-z]+.*(?:EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line) &&
-      # Exclude lines that are clearly not authors (journal names, titles, etc.)
-      !Regex.match?(~r/(J\s+Hum\s+Lact|Predicting|Breastfeeding|Duration|LATCH|Assessment|Tool|Abstract)/i, line)
+    # Filter out lines that are clearly not authors
+    filtered_lines = lines
+    |> Enum.reject(fn line ->
+      # Skip journal names, EBSCO headers, institutions, etc.
+      Regex.match?(~r/^(J\s+Hum\s+Lact|Journal|EBSCO|Full\s*text|EBSCOhost|University|College|School|Library|Database|Abstract)/i, line) ||
+      # Skip very short or very long lines
+      String.length(line) < 4 || String.length(line) > 150 ||
+      # Skip lines that are purely numbers, dates, or codes
+      Regex.match?(~r/^\d+[\d\s\-\/]*$/, line) ||
+      # Skip common non-author patterns
+      Regex.match?(~r/^(page|vol\.|volume|issue|doi:|accessed|downloaded|available|from:)/i, line)
     end)
 
-    # Combine multi-line author sections (like "Name1, Name2," on one line and "and Name3" on next)
-    combined_author_text = case author_lines do
-      [] -> ""
-      [single_line] -> single_line
-      multiple_lines -> 
-        # Join consecutive author lines, looking for continuation patterns
-        multiple_lines
-        |> Enum.join(" ")
+    # Strategy 1: Lines with academic credentials
+    credential_lines = filtered_lines
+    |> Enum.filter(fn line ->
+      # Contains names with credentials but not title/journal words
+      Regex.match?(~r/[A-Z][a-z]+\s+[A-Z][a-z]+.*(?:EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line) &&
+      !contains_non_author_keywords?(line)
+    end)
+
+    # Strategy 2: Lines that look like author name lists (comma-separated names)
+    name_list_lines = filtered_lines
+    |> Enum.filter(fn line ->
+      # Contains comma-separated patterns that look like names
+      name_count = Regex.scan(~r/[A-Z][a-z]+\s+[A-Z][a-z]+/, line) |> length()
+      comma_count = String.graphemes(line) |> Enum.count(&(&1 == ","))
+
+      name_count >= 1 && comma_count >= 1 && name_count >= comma_count &&
+      !contains_non_author_keywords?(line) &&
+      # Not purely institutional (like "University of Michigan, Department of...")
+      !Regex.match?(~r/(university|college|school|department|center|institute)/i, line)
+    end)
+
+    # Strategy 3: Lines after title that contain proper names
+    title_found_index = filtered_lines
+    |> Enum.find_index(fn line ->
+      # A substantial line that could be a title
+      String.length(line) >= 15 && String.length(line) <= 200 &&
+      Regex.match?(~r/[a-z]/, line) &&
+      !Regex.match?(~r/(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)/i, line)
+    end)
+
+    post_title_authors = case title_found_index do
+      nil -> []
+      index when index < length(filtered_lines) - 1 ->
+        filtered_lines
+        |> Enum.drop(index + 1)
+        |> Enum.take(5)  # Check next 5 lines after title
+        |> Enum.filter(fn line ->
+          # Look for lines with proper names that could be authors
+          name_count = Regex.scan(~r/[A-Z][a-z]+\s+[A-Z][a-z]+/, line) |> length()
+          name_count >= 1 && name_count <= 6 &&  # Reasonable author count
+          !contains_non_author_keywords?(line) &&
+          String.length(line) >= 8 && String.length(line) <= 120
+        end)
+      _ -> []
     end
 
-    # Extract all author names from the combined text
-    if combined_author_text != "" do
-      extract_individual_authors(combined_author_text)
-    else
-      []
+    # Combine all potential author lines
+    all_author_candidates = (credential_lines ++ name_list_lines ++ post_title_authors) |> Enum.uniq()
+
+    # Extract authors from the best candidates
+    case all_author_candidates do
+      [] ->
+        # Fallback: look for any decent name patterns in the first 20 lines
+        extract_fallback_authors(filtered_lines |> Enum.take(20))
+
+      candidates ->
+        candidates
+        |> Enum.flat_map(&extract_individual_authors/1)
+        |> Enum.uniq()
+        |> Enum.take(8)  # Reasonable limit
     end
+  end
+
+  def extract_authors_from_text(_), do: []
+
+  defp contains_non_author_keywords?(line) do
+    Regex.match?(~r/(predicting|breastfeeding|duration|latch|assessment|tool|abstract|study|research|analysis|conclusion|introduction|method|result|discussion|journal|volume|issue|page|artificial|intelligence|machine|learning|impact|government|job|loss|risk)/i, line)
+  end
+
+  defp extract_fallback_authors(lines) do
+    lines
+    |> Enum.flat_map(fn line ->
+      # Extract any reasonable name patterns
+      Regex.scan(~r/\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b/, line)
+      |> Enum.map(fn [_full, first, last] -> "#{first} #{last}" end)
+    end)
+    |> Enum.reject(fn name ->
+      # Filter out obvious non-names
+      contains_non_author_keywords?(name) ||
+      Regex.match?(~r/(Full|Text|Human|Lactation|Journal|Page|Vol|Issue|Artificial|Intelligence|Machine|Learning|Data|Science|Computer|Technology|Digital|System|Model|Algorithm|Information|Knowledge)/i, name) ||
+      is_common_non_name_combination?(name)
+    end)
+    |> Enum.uniq()
+    |> Enum.take(4)
   end
 
   # Extract individual author names from a text containing multiple authors with credentials
   defp extract_individual_authors(author_text) do
     # More careful credential removal - only remove when preceded by comma or space
     cleaned_text = author_text
-    |> String.replace(~r/,\s*(EdD|RN|IBCLC|BSN|BA|PhD|MD|Dr\.)\b/i, ",") # Remove credentials after comma
-    |> String.replace(~r/\s+(EdD|RN|IBCLC|BSN|BA|PhD|MD|Dr\.)\b/i, " ") # Remove credentials after space
+    |> String.replace(~r/,\s*(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)\b/i, ",") # Remove credentials after comma
+    |> String.replace(~r/\s+(EdD|RN|IBCLC|BSN|BA|MA|PhD|MD|Dr\.)\b/i, " ") # Remove credentials after space
     |> String.replace(~r/,\s*,/, ",") # Clean up double commas
     |> String.replace(~r/\s+/, " ") # Normalize spaces
     |> String.trim()
@@ -329,15 +493,32 @@ defmodule ResearchPlatform.Services.PdfService do
     |> Enum.map(fn [_full, first, last] -> "#{first} #{last}" end)
     |> Enum.uniq()
     |> Enum.reject(fn name ->
-      # Filter out non-author names (journal names, etc.)
-      Regex.match?(~r/(Hum|Lact|Predicting|Breastfeeding|Duration|LATCH|Assessment|Tool)/i, name)
+      # Filter out non-author names (journal names, institutional names, common terms, etc.)
+      contains_non_author_keywords?(name) ||
+      Regex.match?(~r/(Full|Text|Human|Lactation|Journal|Page|Vol|Issue|EBSCO|University|College|School|Library|Database|Artificial|Intelligence|Machine|Learning|Neural|Network|Data|Science|Computer|Technology|Digital|System|Model|Algorithm|Information|Knowledge)/i, name) ||
+      # Filter out common non-name combinations
+      is_common_non_name_combination?(name)
     end)
-    |> Enum.take(10) # Reasonable limit
+    |> Enum.take(8) # Reasonable limit
 
     names
   end
-  
-  def extract_authors_from_text(_), do: []
+
+  defp is_common_non_name_combination?(name) do
+    # Common patterns that aren't names
+    common_terms = [
+      "Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Network",
+      "Data Science", "Computer Science", "Information Technology", "Digital Transformation",
+      "Business Intelligence", "Social Media", "Public Policy", "Human Resources",
+      "Quality Control", "Risk Management", "Project Management", "Change Management",
+      "United States", "New York", "San Francisco", "Los Angeles", "United Kingdom",
+      "North America", "South America", "Middle East", "Southeast Asia",
+      "Research Paper", "Case Study", "White Paper", "Technical Report",
+      "Executive Summary", "Literature Review", "Systematic Review", "Meta Analysis"
+    ]
+
+    Enum.any?(common_terms, fn term -> String.downcase(name) == String.downcase(term) end)
+  end
 
   def parse_author_string(author_string) when is_binary(author_string) do
     # Parse author string by looking for name patterns

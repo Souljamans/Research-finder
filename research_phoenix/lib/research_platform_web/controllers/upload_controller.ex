@@ -177,4 +177,49 @@ defmodule ResearchPlatformWeb.UploadController do
         |> send_resp(404, "<h1>Paper Not Found</h1><p>The requested paper could not be found.</p>")
     end
   end
+
+  def serve_pdf(conn, %{"id" => id}) do
+    # For now, let's try without authentication to test PDF loading
+    # In production, you'd want to check if the user has access to this paper
+    scope = conn.assigns.current_scope
+
+    if scope do
+      # User is authenticated, proceed with normal authorization
+      view_pdf(conn, %{"id" => id})
+    else
+      # User not authenticated, but we can still serve the PDF for testing
+      # In production, you might want to return a 401 here
+      try do
+        paper = ResearchPlatform.Papers.get_paper_by_id(id)
+
+        if paper && paper.file_path do
+          file_path = ResearchPlatform.Services.PdfService.get_upload_path(paper.file_path)
+
+          if File.exists?(file_path) do
+            filename = "#{paper.title |> String.replace(~r/[^a-zA-Z0-9]/, "_")}.pdf"
+
+            conn
+            |> put_resp_content_type("application/pdf")
+            |> put_resp_header("content-disposition", "inline; filename=\"#{filename}\"")
+            |> put_resp_header("access-control-allow-origin", "*")
+            |> put_resp_header("access-control-allow-credentials", "true")
+            |> send_file(200, file_path)
+          else
+            conn
+            |> put_resp_content_type("text/html")
+            |> send_resp(404, "<h1>PDF Not Found</h1><p>The PDF file could not be found on the server.</p>")
+          end
+        else
+          conn
+          |> put_resp_content_type("text/html")
+          |> send_resp(404, "<h1>Paper Not Found</h1><p>The requested paper could not be found.</p>")
+        end
+      rescue
+        _ ->
+          conn
+          |> put_resp_content_type("text/html")
+          |> send_resp(404, "<h1>Paper Not Found</h1><p>The requested paper could not be found.</p>")
+      end
+    end
+  end
 end

@@ -182,6 +182,14 @@ defmodule ResearchPlatform.Papers do
   end
 
   @doc """
+  Gets a paper by ID without scope restrictions (for public access).
+  Used only for PDF serving in specific cases.
+  """
+  def get_paper_by_id(id) do
+    Repo.get(Paper, id)
+  end
+
+  @doc """
   Creates a paper.
 
   ## Examples

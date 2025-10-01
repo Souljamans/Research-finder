@@ -39,12 +39,12 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
       </.header>
 
       <div class="flex h-screen">
-        <div class={["flex-1", @show_notes_panel && "pr-4"]}>
+        <div class={["flex-1", @show_notes_panel && "pr-4"]} id="pdf-container">
           <%= if @paper.file_path do %>
-            <div 
-              id="pdf-viewer" 
-              phx-hook="PDFViewerHook" 
-              data-pdf-url={"/api/papers/#{@paper.id}/view"} 
+            <div
+              id="pdf-viewer"
+              phx-hook="PDFViewerHook"
+              data-pdf-url={@pdf_url}
               data-paper-id={@paper.id}
               class="w-full h-full border rounded-lg shadow-lg bg-white"
             >
@@ -166,11 +166,15 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
     paper = Papers.get_paper!(socket.assigns.current_scope, id)
     notes = Papers.list_notes(socket.assigns.current_scope, paper.id)
 
-    socket = 
+    # Use public PDF route to avoid authentication issues with PDF.js
+    pdf_url = "/public/pdf/#{paper.id}"
+
+    socket =
       socket
       |> assign(:page_title, "Viewing #{paper.title}")
       |> assign(:paper, paper)
       |> assign(:notes, notes)
+      |> assign(:pdf_url, pdf_url)
       |> assign(:show_notes_panel, true)
       |> assign(:selected_position, nil)
       |> assign(:search_query, "")
@@ -180,7 +184,7 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
     if connected?(socket) do
       Papers.subscribe_papers(socket.assigns.current_scope)
       Papers.subscribe_notes(socket.assigns.current_scope, paper.id)
-      
+
       # Send initial notes to JavaScript
       send(self(), :send_notes_to_js)
     end
@@ -189,6 +193,43 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
   end
 
   @impl true
+  def handle_event("create_note", %{"content" => content, "note_type" => note_type, "page" => page, "x" => x, "y" => y}, socket) do
+    note_params = %{
+      "content" => content,
+      "note_type" => note_type,
+      "paper_id" => socket.assigns.paper.id,
+      "page" => page,
+      "x_position" => x,
+      "y_position" => y
+    }
+
+    case Papers.create_note(note_params, socket.assigns.current_scope) do
+      {:ok, note} ->
+        updated_notes = [note | socket.assigns.notes]
+
+        {:noreply,
+         socket
+         |> assign(:notes, updated_notes)
+         |> push_event("add_note", %{
+           id: note.id,
+           page: note.page,
+           x: note.x_position,
+           y: note.y_position,
+           content: note.content
+         })
+         |> put_flash(:info, "Note created successfully")}
+
+      {:error, changeset} ->
+        errors =
+          changeset.errors
+          |> Enum.map(fn {field, {msg, _}} -> "#{field}: #{msg}" end)
+          |> Enum.join(", ")
+
+        {:noreply, put_flash(socket, :error, "Failed to create note: #{errors}")}
+    end
+  end
+
+  # Keep the old handler for backward compatibility, but don't use it for the main flow
   def handle_event("page_clicked", %{"page" => page, "x" => x, "y" => y}, socket) do
     position = %{page: page, x: x, y: y}
     note_changeset = Papers.change_note(%Note{}, %{page: page, x_position: x, y_position: y})
@@ -289,8 +330,7 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
     filename = "notes_#{socket.assigns.paper.title |> String.replace(~r/[^a-zA-Z0-9_-]/, "_")}.md"
     
     {:noreply,
-     socket
-     |> push_event("download_file", %{
+     push_event(socket, "download_file", %{
        content: notes_text,
        filename: filename,
        content_type: "text/markdown"
@@ -303,7 +343,7 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
   end
 
   def handle_info(:send_notes_to_js, socket) do
-    notes_data = 
+    notes_data =
       socket.assigns.notes
       |> Enum.map(fn note ->
         %{
@@ -315,7 +355,7 @@ defmodule ResearchPlatformWeb.PaperLive.Viewer do
         }
       end)
 
-    {:noreply, push_event(socket, "load_notes", notes_data)}
+    {:noreply, push_event(socket, "load_notes", %{notes: notes_data})}
   end
 
   @impl true

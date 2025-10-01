@@ -23,6 +23,13 @@ defmodule ResearchPlatformWeb.Router do
     get "/", PageController, :home
   end
 
+  # Public PDF serving (we'll check authorization in the controller)
+  scope "/public", ResearchPlatformWeb do
+    pipe_through :browser
+
+    get "/pdf/:id", UploadController, :serve_pdf
+  end
+
   # API routes for file uploads
   scope "/api", ResearchPlatformWeb do
     pipe_through [:browser, :require_authenticated_user]

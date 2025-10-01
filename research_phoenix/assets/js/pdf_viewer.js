@@ -16,27 +16,50 @@ export class PDFViewer {
   }
 
   async init() {
-    console.log('Initializing PDF viewer with URL:', this.pdfUrl);
+    console.log('=== PDF Viewer Initialization ===');
+    console.log('PDF URL:', this.pdfUrl);
+    console.log('Container:', this.container);
     console.log('pdfjsLib available:', !!window.pdfjsLib);
-    
+    console.log('pdfjsLib version:', window.pdfjsLib?.version);
+    console.log('Worker source:', window.pdfjsLib?.GlobalWorkerOptions?.workerSrc);
+
     if (!window.pdfjsLib) {
       console.error('PDF.js not loaded');
-      this.container.innerHTML = '<div class="error p-4 text-red-600">PDF.js library not loaded. Please refresh the page.</div>';
+      this.container.innerHTML = '<div class="error p-4 text-red-600 border border-red-300 rounded">PDF.js library not loaded. Please refresh the page.</div>';
       return;
     }
-    
+
     try {
       console.log('Loading PDF document...');
-      
+
       // Set up loading indicator
       this.container.innerHTML = '<div class="flex items-center justify-center p-8"><div class="loading loading-spinner loading-lg"></div><span class="ml-4">Loading PDF...</span></div>';
-      
-      // Add timeout to prevent hanging
-      const loadingTask = pdfjsLib.getDocument(this.pdfUrl);
-      const timeoutPromise = new Promise((_, reject) => 
+
+      // First try to fetch the PDF with credentials to check if it's accessible
+      console.log('Testing PDF URL accessibility...');
+      const testResponse = await fetch(this.pdfUrl, {
+        method: 'HEAD',
+        credentials: 'same-origin',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest'
+        }
+      });
+
+      if (!testResponse.ok) {
+        throw new Error(`HTTP ${testResponse.status}: ${testResponse.statusText}`);
+      }
+
+      console.log('PDF URL accessible, loading with PDF.js...');
+
+      // Try loading with PDF.js
+      const loadingTask = pdfjsLib.getDocument({
+        url: this.pdfUrl,
+        withCredentials: true
+      });
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('PDF loading timeout')), 30000)
       );
-      
+
       this.pdf = await Promise.race([loadingTask.promise, timeoutPromise]);
       console.log('PDF loaded successfully, pages:', this.pdf.numPages);
       this.setupControls();
@@ -44,21 +67,22 @@ export class PDFViewer {
     } catch (error) {
       console.error('Error loading PDF:', error);
       let errorMessage = 'Error loading PDF';
-      
+
       if (error.message.includes('timeout')) {
         errorMessage = 'PDF loading timed out. Please try refreshing the page.';
       } else if (error.message.includes('Invalid PDF')) {
         errorMessage = 'Invalid PDF file. Please check the file format.';
-      } else if (error.message.includes('NetworkError')) {
-        errorMessage = 'Network error loading PDF. Please check your connection and try again.';
+      } else if (error.message.includes('NetworkError') || error.message.includes('HTTP')) {
+        errorMessage = `Network error loading PDF: ${error.message}. This might be an authentication issue.`;
       } else {
         errorMessage = `Error loading PDF: ${error.message}`;
       }
-      
+
       this.container.innerHTML = `
         <div class="error p-4 text-red-600 border border-red-300 rounded bg-red-50">
           <h3 class="font-semibold mb-2">PDF Loading Error</h3>
           <p>${errorMessage}</p>
+          <p class="text-sm mt-2 text-gray-600">PDF URL: ${this.pdfUrl}</p>
           <button onclick="window.location.reload()" class="mt-3 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700">
             Refresh Page
           </button>
@@ -116,12 +140,16 @@ export class PDFViewer {
 
     const canvas = document.getElementById('pdfCanvas');
     canvas.addEventListener('click', (e) => {
+      console.log('=== PDF Canvas Clicked ===');
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const pageX = (x / canvas.offsetWidth) * 100;
       const pageY = (y / canvas.offsetHeight) * 100;
-      
+
+      console.log('Click position:', { x, y, pageX, pageY, currentPage: this.currentPage });
+      console.log('onPageClick function:', typeof this.onPageClick);
+
       this.onPageClick({
         page: this.currentPage,
         x: pageX,
@@ -133,24 +161,47 @@ export class PDFViewer {
   }
 
   async renderPage(pageNum) {
-    const page = await this.pdf.getPage(pageNum);
-    const viewport = page.getViewport({ scale: this.scale });
-    
-    const canvas = document.getElementById('pdfCanvas');
-    const context = canvas.getContext('2d');
-    
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-    
-    const renderContext = {
-      canvasContext: context,
-      viewport: viewport
-    };
-    
-    await page.render(renderContext).promise;
-    
-    this.updateControls();
-    this.renderNotes();
+    console.log('=== Rendering Page ===');
+    console.log('Page number:', pageNum);
+    console.log('Current scale:', this.scale);
+
+    try {
+      const page = await this.pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: this.scale });
+
+      console.log('Viewport:', viewport);
+
+      const canvas = document.getElementById('pdfCanvas');
+      if (!canvas) {
+        console.error('Canvas element not found!');
+        return;
+      }
+
+      const context = canvas.getContext('2d');
+      if (!context) {
+        console.error('Could not get canvas context!');
+        return;
+      }
+
+      console.log('Setting canvas dimensions:', viewport.width, 'x', viewport.height);
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+
+      const renderContext = {
+        canvasContext: context,
+        viewport: viewport
+      };
+
+      console.log('Starting page render...');
+      await page.render(renderContext).promise;
+      console.log('Page render completed successfully');
+
+      this.updateControls();
+      this.renderNotes();
+    } catch (error) {
+      console.error('Error rendering page:', error);
+      this.container.innerHTML = `<div class="error p-4 text-red-600 border border-red-300 rounded">Error rendering PDF page: ${error.message}</div>`;
+    }
   }
 
   updateControls() {

@@ -17,8 +17,8 @@ defmodule ResearchPlatform.Papers.Note do
   @doc false
   def changeset(note, attrs, user_scope) do
     note
-    |> cast(attrs, [:content, :page, :x_position, :y_position, :note_type])
-    |> validate_required([:content])
+    |> cast(attrs, [:content, :page, :x_position, :y_position, :note_type, :paper_id])
+    |> validate_required([:content, :paper_id])
     |> validate_number(:page, greater_than: 0)
     |> validate_number(:x_position, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
     |> validate_number(:y_position, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
